@@ -11,6 +11,7 @@ import { escapeHtml, fieldLabel, formatAxisValue, formatTime, formatValue } from
 import { deepMerge, isPlainObject } from '../../core/sanitize';
 import { ALL_PAIRS_SAFE_SLOTS, STATUS_META, statusForValue, type ResolvedTheme } from '../../core/theme';
 import type { ChartDefinition, FieldDef, Row, StatusLevel } from '../../core/types';
+import { layoutWords } from './word-layout';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Opt = Record<string, any>;
@@ -19,6 +20,7 @@ export interface Lookup {
   row?: Row;
   rows?: Row[];
   name?: string;
+  value?: unknown;
 }
 
 export interface BuildResult {
@@ -1078,33 +1080,42 @@ function buildSunburst(ctx: Ctx): BuildResult {
 function buildBubble(ctx: Ctx): BuildResult {
   const { definition: def, rows, theme: t, locale } = ctx;
   const e = def.encoding!;
-  const categories = distinct(rows, e.category!);
-  const grouped = categories.map(cat => rows.filter(r => r[e.category!] === cat && typeof r[e.value!] === 'number'));
-  const extent = numericExtent(rows, e.value!);
+  const xy = typeof e.x === 'string' && typeof e.y === 'string';
+  const yField = typeof e.y === 'string' ? e.y : undefined;
+  const valid = rows.filter(r => typeof r[e.value!] === 'number' && (!xy || (typeof r[e.x!] === 'number' && typeof r[yField!] === 'number')));
+  const categories = distinct(valid, e.category!);
+  const grouped = categories.map(cat => valid.filter(r => r[e.category!] === cat));
+  const extent = numericExtent(valid, e.value!);
+  const minSize = Math.max(0, extent?.[0] ?? 0);
   const maxSize = Math.max(0, extent?.[1] ?? 0);
-  const maxCount = Math.max(1, ...grouped.map(g => g.length));
+  const fm = fieldMap(def.data.fields);
   const series = grouped.map((group, i) => ({
     type: 'scatter', name: String(categories[i]), id: `bubble:${i}`,
-    data: group.map((r, index) => [i, index, r[e.value!]]),
-    symbolSize: (value: number[]) => maxSize > 0 ? 14 + Math.sqrt(Math.max(0, value[2]!) / maxSize) * 32 : 14,
-    itemStyle: { color: t.palette[i % t.palette.length], opacity: 0.8 },
-    label: { show: true, position: 'top', color: t.tokens.textSecondary, fontSize: 10, formatter: (p: Opt) => String(group[p.dataIndex]?.[e.label!] ?? '') },
+    data: group.map(r => ({ name: String(r[e.label!] ?? ''), value: [xy ? r[e.x!] : categories[i], xy ? r[yField!] : r[e.value!], r[e.value!]] })),
+    symbolSize: (value: number[]) => maxSize > minSize ? 14 + Math.sqrt((Math.max(minSize, value[2]!) - minSize) / (maxSize - minSize)) * 48 : 34,
+    itemStyle: { color: t.palette[i % t.palette.length], opacity: 0.65, borderColor: t.palette[i % t.palette.length], borderWidth: 1 },
+    label: { show: def.options?.labels === true, position: 'inside', color: t.tokens.textPrimary, fontSize: 10, formatter: (p: Opt) => String(group[p.dataIndex]?.[e.label!] ?? '') },
     emphasis: { scale: 1.15 },
   }));
   return {
     option: {
-      ...baseOption(ctx), grid: { left: 36, right: 24, top: 40, bottom: 40 },
-      xAxis: { ...axisCommon(t), type: 'category', data: categories },
-      yAxis: { type: 'value', min: -0.5, max: maxCount - 0.5, show: false },
+      ...baseOption(ctx), grid: { left: 48, right: 36, top: 46, bottom: 48, containLabel: true },
+      xAxis: xy ? { ...valueAxis(t, fm.get(e.x!), locale), scale: true } : { ...axisCommon(t), type: 'category', data: categories },
+      yAxis: { ...valueAxis(t, fm.get(yField ?? e.value!), locale), scale: true },
+      legend: legendOption(ctx, categories.map(String), 'top'),
       series, tooltip: {
         ...tooltipBase(t, 'item'), show: def.interactions?.includes('tooltip') !== false,
         formatter: (p: Opt) => {
           const row = grouped[p.seriesIndex]?.[p.dataIndex];
-          return row ? tooltipHeader(String(row[e.label!])) + tooltipRow(p.color, String(row[e.category!]), formatValue(row[e.value!], undefined, { locale })) : '';
+          if (!row) return '';
+          return tooltipHeader(String(row[e.label!])) +
+            (xy ? tooltipRow(p.color, fieldLabel(fm.get(e.x!), e.x!), formatValue(row[e.x!], fm.get(e.x!), { locale })) +
+              tooltipRow(p.color, fieldLabel(fm.get(yField!), yField!), formatValue(row[yField!], fm.get(yField!), { locale })) : '') +
+            tooltipRow(p.color, fieldLabel(fm.get(e.value!), e.value!), formatValue(row[e.value!], fm.get(e.value!), { locale }));
         },
       },
     },
-    warnings: [], lookup: (si, di) => ({ row: grouped[si]?.[di] }),
+    warnings: valid.length < rows.length ? ['좌표 또는 값이 올바르지 않은 버블 항목을 제외했습니다.'] : [], lookup: (si, di) => ({ row: grouped[si]?.[di] }),
   };
 }
 
@@ -1112,26 +1123,41 @@ function buildGaugeGroup(ctx: Ctx): BuildResult {
   const { definition: def, rows, theme: t, locale } = ctx;
   const e = def.encoding!;
   const valid = rows.filter(r => typeof r[e.value!] === 'number');
-  const columns = Math.max(1, Math.ceil(Math.sqrt(valid.length * 1.5)));
-  const lines = Math.max(1, Math.ceil(valid.length / columns));
-  const radius = `${Math.min(40 / columns, 40 / lines)}%`;
-  const series = valid.map((row, i) => ({
-    type: 'gauge', id: `gauge:${i}`, name: String(row[e.label!] ?? ''),
-    center: [`${(i % columns + 0.5) * 100 / columns}%`, `${(Math.floor(i / columns) + 0.5) * 100 / lines}%`],
-    radius, min: def.options?.min ?? 0, max: def.options?.max ?? 100,
-    startAngle: 215, endAngle: -35, axisLine: { lineStyle: { width: 8, color: [[1, t.tokens.bgHover]] } },
-    progress: { show: true, width: 8, itemStyle: { color: t.palette[i % t.palette.length] } },
-    pointer: { show: false }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: false },
-    title: { offsetCenter: [0, '55%'], color: t.tokens.textSecondary, fontSize: 11 },
-    detail: { offsetCenter: [0, '5%'], color: t.tokens.textPrimary, fontSize: 16, formatter: (v: number) => formatValue(v, fieldMap(def.data.fields).get(e.value!), { locale }) },
-    data: [{ name: String(row[e.label!] ?? ''), value: row[e.value!] }],
-  }));
+  const min = def.options?.min ?? 0;
+  const max = def.options?.max ?? 100;
+  const span = max - min;
+  const step = Math.min(9, 50 / Math.max(valid.length, 1));
+  const vf = fieldMap(def.data.fields).get(e.value!);
+  const series = valid.map((row, i) => {
+    const name = String(row[e.label!] ?? '');
+    const value = row[e.value!] as number;
+    const progress = Math.max(0, Math.min(span, value - min));
+    const outer = 80 - i * step;
+    return {
+      type: 'pie', id: `gauge:${i}`, name, center: ['50%', '45%'],
+      radius: [`${outer - step * 0.8}%`, `${outer}%`],
+      startAngle: 90, clockwise: true, avoidLabelOverlap: false,
+      label: { show: false }, labelLine: { show: false },
+      emphasis: { scale: false },
+      data: [
+        { name, value: progress, itemStyle: { color: t.palette[i % t.palette.length], borderRadius: step >= 4 ? 4 : 0 } },
+        { name: '', value: span - progress, itemStyle: { color: t.tokens.bgHover }, tooltip: { show: false } },
+      ],
+    };
+  });
   return {
-    option: { ...baseOption(ctx), series, tooltip: {
+    option: { ...baseOption(ctx), series,
+      legend: { ...legendOption(ctx, valid.map(r => String(r[e.label!] ?? '')), 'bottom'), selectedMode: false },
+      tooltip: {
       ...tooltipBase(t, 'item'), show: def.interactions?.includes('tooltip') !== false,
-      formatter: (p: Opt) => tooltipHeader(String(p.name)) + tooltipRow(t.palette[p.seriesIndex % t.palette.length]!, fieldLabel(fieldMap(def.data.fields).get(e.value!), e.value!), formatValue(p.value, fieldMap(def.data.fields).get(e.value!), { locale })),
+      formatter: (p: Opt) => {
+        const row = valid[p.seriesIndex];
+        return row && p.dataIndex === 0
+          ? tooltipHeader(String(row[e.label!] ?? '')) + tooltipRow(t.palette[p.seriesIndex % t.palette.length]!, fieldLabel(vf, e.value!), formatValue(row[e.value!], vf, { locale }))
+          : '';
+      },
     } },
-    warnings: [], lookup: si => ({ row: valid[si] }),
+    warnings: [], lookup: (si, di) => di === 0 && valid[si] ? { row: valid[si], value: valid[si]![e.value!] } : undefined,
   };
 }
 
@@ -1189,46 +1215,30 @@ function buildPolarPie(ctx: Ctx): BuildResult {
 function buildWordCloud(ctx: Ctx): BuildResult {
   const { definition: def, rows, theme: t, locale } = ctx;
   const e = def.encoding!;
-  const words = rows.filter(r => typeof r[e.value!] === 'number' && (r[e.value!] as number) > 0 && r[e.category!] != null);
-  const max = Math.max(1, ...words.map(r => r[e.value!] as number));
-  const sizes = words.map(r => 14 + 26 * Math.sqrt((r[e.value!] as number) / max));
-  const layout = (width: number, height: number) => {
-    const widths = words.map((r, i) => [...String(r[e.category!])].reduce((n, ch) => n + (ch.charCodeAt(0) > 255 ? 1 : 0.65), 0) * sizes[i]! + 8);
-    const area = widths.reduce((sum, w, i) => sum + w * (sizes[i]! + 8), 0);
-    const targetWidth = Math.min(width, Math.max(Math.max(1, ...widths), Math.sqrt(area * Math.max(1, width) / Math.max(1, height) * 1.5)));
-    let scale = Math.min(1, targetWidth / Math.max(1, ...widths));
-    let positions: { x: number; y: number; size: number }[] = [];
-    for (let attempt = 0; attempt < 100; attempt++) {
-      positions = []; let x = 0, y = 0, line = 0;
-      for (let i = 0; i < words.length; i++) {
-        const w = widths[i]! * scale, h = (sizes[i]! + 8) * scale;
-        if (x + w > targetWidth && x > 0) { y += line; x = 0; line = 0; }
-        positions.push({ x: (width - targetWidth) / 2 + x + w / 2, y: y + h / 2, size: sizes[i]! * scale });
-        x += w; line = Math.max(line, h);
-      }
-      if (y + line <= height) {
-        positions.forEach(pos => { pos.y += (height - y - line) / 2; });
-        break;
-      }
-      scale *= 0.85;
-    }
-    return positions;
-  };
-  let cached = { width: -1, height: -1, positions: [] as { x: number; y: number; size: number }[] };
+  const eligible = rows.filter(r => typeof r[e.value!] === 'number' && (r[e.value!] as number) > 0 && r[e.category!] != null);
+  const words = eligible.length > 100
+    ? [...eligible].sort((a, b) => (b[e.value!] as number) - (a[e.value!] as number)).slice(0, 100)
+    : eligible;
+  const layoutInput = words.map(r => ({ text: String(r[e.category!]), weight: r[e.value!] as number }));
+  let cached = { width: -1, height: -1, positions: [] as ReturnType<typeof layoutWords> };
   const series = [{
     type: 'custom', coordinateSystem: 'none',
     data: words.map(r => [r[e.category!], r[e.value!]]),
     renderItem: (params: Opt, api: Opt) => {
       const width = api.getWidth(), height = api.getHeight();
-      if (width !== cached.width || height !== cached.height) cached = { width, height, positions: layout(width, height) };
+      if (width !== cached.width || height !== cached.height) cached = { width, height, positions: layoutWords(layoutInput, width, height) };
       const pos = cached.positions[params.dataIndex];
       if (!pos) return null;
-      return { type: 'text', style: { x: pos.x, y: pos.y, text: String(words[params.dataIndex]?.[e.category!] ?? ''), fontSize: pos.size, fontFamily: t.fontFamily, fill: t.palette[params.dataIndex % t.palette.length], align: 'center', verticalAlign: 'middle' } };
+      return { type: 'text', x: pos.x, y: pos.y, rotation: pos.rotate ? Math.PI / 2 : 0, style: { x: 0, y: 0, text: String(words[params.dataIndex]?.[e.category!] ?? ''), fontSize: pos.fontSize, fontFamily: t.fontFamily, fill: t.palette[params.dataIndex % t.palette.length], align: 'center', verticalAlign: 'middle' } };
     },
   }];
   return {
     option: { ...baseOption(ctx), series, tooltip: { ...tooltipBase(t, 'item'), show: def.interactions?.includes('tooltip') !== false, formatter: (p: Opt) => tooltipHeader(String(p.value[0])) + tooltipRow(t.palette[p.dataIndex % t.palette.length]!, '가중치', formatValue(p.value[1], undefined, { locale })) } },
-    warnings: words.length < rows.length ? ['가중치가 0 이하이거나 단어가 없는 행은 제외했습니다.'] : [], lookup: (_si, di) => ({ row: words[di] }),
+    warnings: [
+      ...(eligible.length < rows.length ? ['가중치가 0 이하이거나 단어가 없는 행은 제외했습니다.'] : []),
+      ...(words.length < eligible.length ? ['워드 클라우드는 가중치가 높은 100개 단어만 표시합니다. 데이터 표도 행 수 제한이 적용됩니다.'] : []),
+    ],
+    lookup: (_si, di) => ({ row: words[di] }),
   };
 }
 

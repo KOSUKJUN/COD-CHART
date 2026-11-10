@@ -182,6 +182,12 @@ export function validateChartDefinition(input: unknown): ValidationResult {
   const enc = raw.encoding;
   if (enc !== undefined && !isPlainObject(enc)) err('encoding', 'type', 'encoding은 객체여야 합니다.');
   const encoding = (isPlainObject(enc) ? enc : {}) as Record<string, unknown>;
+  if (descriptor.type === 'bubble' && (encoding.x === undefined) !== (encoding.y === undefined)) {
+    err('encoding', 'bubble-coordinates', '버블 차트의 x와 y는 함께 지정해야 합니다.');
+  }
+  if (descriptor.type === 'bubble' && Array.isArray(encoding.y)) {
+    err('encoding.y', 'type', '버블 차트의 y는 단일 숫자 필드여야 합니다.');
+  }
   for (const ch of descriptor.required) {
     const v = encoding[ch];
     if (v === undefined || (Array.isArray(v) && v.length === 0)) err(`encoding.${ch}`, 'required', `'${descriptor.type}' 유형에는 encoding.${ch}가 필요합니다.`);
@@ -283,7 +289,16 @@ export function validateChartDefinition(input: unknown): ValidationResult {
     if (o.thresholds !== undefined && (!Array.isArray(o.thresholds) || !o.thresholds.every((t) => isPlainObject(t) && typeof t.value === 'number' && Number.isFinite(t.value)))) {
       err('options.thresholds', 'type', 'thresholds는 { value: number } 배열이어야 합니다.');
     }
-    if (typeof o.min === 'number' && typeof o.max === 'number' && o.min >= o.max) err('options.max', 'range', 'max는 min보다 커야 합니다.');
+    if (descriptor.type === 'gauge-group') {
+      for (const key of ['min', 'max'] as const) {
+        if (o[key] !== undefined && (typeof o[key] !== 'number' || !Number.isFinite(o[key]))) err(`options.${key}`, 'type', '유한한 숫자가 필요합니다.');
+      }
+      const min = typeof o.min === 'number' ? o.min : 0;
+      const max = typeof o.max === 'number' ? o.max : 100;
+      if (min >= max || (Number.isFinite(min) && Number.isFinite(max) && !Number.isFinite(max - min))) {
+        err('options.max', 'range', 'max는 min보다 커야 하며 범위는 유한해야 합니다.');
+      }
+    } else if (typeof o.min === 'number' && typeof o.max === 'number' && o.min >= o.max) err('options.max', 'range', 'max는 min보다 커야 합니다.');
     if (o.stack !== undefined && !['none', 'stacked', 'percent'].includes(o.stack as string)) err('options.stack', 'enum', 'stack은 none | stacked | percent 이어야 합니다.');
     if (o.orientation !== undefined && !['vertical', 'horizontal'].includes(o.orientation as string)) err('options.orientation', 'enum', 'orientation은 vertical | horizontal 이어야 합니다.');
     if (o.pageSize !== undefined && !(typeof o.pageSize === 'number' && o.pageSize >= 1 && o.pageSize <= 500)) err('options.pageSize', 'range', 'pageSize는 1–500 사이여야 합니다.');

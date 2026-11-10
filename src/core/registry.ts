@@ -100,8 +100,8 @@ const descriptors: ComponentDescriptor[] = [
   },
   {
     type: 'bubble', displayName: '버블', description: '범주별 항목의 크기 비교',
-    family: 'cartesian', engine: 'echarts', renderers: ECHARTS_RENDERERS, required: ['category', 'label', 'value'], optional: [],
-    numeric: ['value'], interactions: ['tooltip', 'selection'], defaults: { interactions: ['tooltip', 'selection'], height: 320 },
+    family: 'cartesian', engine: 'echarts', renderers: ECHARTS_RENDERERS, required: ['category', 'label', 'value'], optional: ['x', 'y'],
+    numeric: ['x', 'y', 'value'], interactions: ['tooltip', 'selection', 'legend-toggle'], defaults: { interactions: ['tooltip', 'selection'], height: 320 },
   },
   {
     type: 'word-cloud', displayName: '워드 클라우드', description: '가중치에 따른 단어 크기',

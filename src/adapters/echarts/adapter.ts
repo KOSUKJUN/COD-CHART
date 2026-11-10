@@ -100,7 +100,8 @@ export class EChartsAdapter implements RendererAdapter {
         return;
       }
       const hit = this.last?.lookup(p.seriesIndex, p.dataIndex);
-      this.emit({ type: 'point.click', seriesName: hit?.name ?? p.seriesName, name: p.name, value: p.value, row: hit?.row, rows: hit?.rows });
+      if (this.ctx?.definition.type === 'gauge-group' && !hit) return;
+      this.emit({ type: 'point.click', seriesName: hit?.name ?? p.seriesName, name: p.name, value: hit?.value ?? p.value, row: hit?.row, rows: hit?.rows });
     });
     chart.on('legendselectchanged', (raw: unknown) => {
       const p = raw as Opt;

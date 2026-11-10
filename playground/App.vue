@@ -4,7 +4,7 @@ import { CvChart, type ChartDefinition, type ContentsChartDefinition, type Chart
 import { definitions, kpiRows } from './fixtures';
 import { contentsDefinitions } from './contents-fixtures';
 
-const controls = reactive({ motion: true, patterns: false, svg: true, live: true });
+const controls = reactive({ motion: true, patterns: false, svg: false, live: true });
 const log = ref<{ id: number; time: string; type: string; detail: string }[]>([]);
 let seq = 0;
 
@@ -34,6 +34,37 @@ function withContentsControls(def: ContentsChartDefinition): ContentsChartDefini
 }
 
 const contentsWithControls = computed(() => contentsDefinitions.map(withContentsControls));
+
+const bubbleXY: ChartDefinition = {
+  schemaVersion: '1.0.0', id: 'bubble-xy', type: 'bubble', title: 'Bubble · X / Y / 크기',
+  description: 'X: 점수 · Y: 탐지 건수 · 원 크기: 영향도',
+  data: {
+    fields: [
+      { name: 'group', type: 'string' }, { name: 'name', type: 'string' },
+      { name: 'score', type: 'number', label: '점수' }, { name: 'count', type: 'number', label: '탐지 건수' },
+      { name: 'impact', type: 'number', label: '영향도' },
+    ],
+    rows: [
+      { group: '서버', name: '서버 A', score: 18, count: 28, impact: 30 },
+      { group: '서버', name: '서버 B', score: 35, count: 70, impact: 75 },
+      { group: '서버', name: '서버 C', score: 52, count: 45, impact: 52 },
+      { group: '서버', name: '서버 D', score: 76, count: 83, impact: 92 },
+      { group: '서버', name: '서버 E', score: 87, count: 36, impact: 38 },
+      { group: '네트워크', name: '네트워크 A', score: 24, count: 58, impact: 48 },
+      { group: '네트워크', name: '네트워크 B', score: 43, count: 19, impact: 21 },
+      { group: '네트워크', name: '네트워크 C', score: 63, count: 67, impact: 69 },
+      { group: '네트워크', name: '네트워크 D', score: 81, count: 56, impact: 55 },
+      { group: '네트워크', name: '네트워크 E', score: 96, count: 95, impact: 98 },
+      { group: '사용자', name: '사용자 A', score: 12, count: 88, impact: 40 },
+      { group: '사용자', name: '사용자 B', score: 31, count: 40, impact: 34 },
+      { group: '사용자', name: '사용자 C', score: 57, count: 91, impact: 80 },
+      { group: '사용자', name: '사용자 D', score: 70, count: 25, impact: 28 },
+      { group: '사용자', name: '사용자 E', score: 91, count: 75, impact: 65 },
+    ],
+  },
+  encoding: { category: 'group', label: 'name', x: 'score', y: 'count', value: 'impact' },
+  interactions: ['tooltip', 'selection', 'legend-toggle'],
+};
 
 const errorRateDef: ChartDefinition = {
   schemaVersion: '1.0.0', id: 'kpi-error-rate', type: 'kpi', title: '결제 오류율',
@@ -142,7 +173,8 @@ const brokenDef = { ...definitions.column, id: 'broken', title: '잘못된 정�
 
       <CvChart class="c8" :definition="d.sunburst" :height="400" @point-click="onEvent" />
 
-      <CvChart v-for="content in contentsWithControls" :key="content.id" class="c4" :definition="content" :height="340" @point-click="onEvent" />
+      <CvChart v-for="content in contentsWithControls" :key="content.id" :class="['bubble', 'word-cloud'].includes(content.type) ? 'c6' : 'c4'" :definition="content" :height="340" @point-click="onEvent" />
+      <CvChart class="c6" :definition="withControls(bubbleXY)" :height="340" @point-click="onEvent" @legend-toggle="onEvent" />
 
       <CvChart class="c8" :definition="d.table" :height="400" @row-click="onEvent" />
       <CvChart class="c4" :definition="d.status" :height="400" @item-select="onEvent" />

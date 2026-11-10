@@ -31,6 +31,14 @@ describe('COD-PRO Contents Data', () => {
     expect(def.data.rows?.map(r => r.value)).toEqual([11, 32, 45, 17, 65]);
   });
 
+  it('rejects invalid effective gauge group ranges', () => {
+    const def = byId('contents-gauge');
+    for (const options of [{ min: 100 }, { max: 0 }, { min: 10, max: 10 }, { min: Number.NaN }, { max: '100' }, { min: -1e308, max: 1e308 }]) {
+      expect(validateChartDefinition({ ...def, options }).valid).toBe(false);
+    }
+    expect(validateChartDefinition({ ...def, options: { min: 10, max: 200 } }).valid).toBe(true);
+  });
+
   it('rejects invalid indices, unsafe colors and mismatched bubble values', () => {
     const line = byId('contents-line');
     const input = { ...line, contentsData: { timesArr: ['one'], data: [{ key: 's', values: [{ x: 1, y: 1 }] }] } };

@@ -303,7 +303,7 @@
 }
 ```
 
-**Data Description:** 각 항목을 개별 게이지로 표시합니다. col0은 항목명, col1은 수치입니다. contentsData를 사용하는 gauge는 모든 항목을 표시하며 기본 범위는 0~100입니다.
+**Data Description:** 각 항목을 동심원 게이지로 표시합니다. col0은 항목명, col1은 수치입니다. contentsData를 사용하는 gauge는 모든 항목을 표시하며 기본 범위는 0~100입니다. 범위 밖의 값은 원형 막대에서 범위 끝에 맞춰 표시하고 툴팁과 이벤트에는 실제 값을 유지합니다.
 
 ## Bubble 차트
 
@@ -334,7 +334,7 @@
 }
 ```
 
-**Data Description:** 범주와 항목별 값을 원의 크기로 표시합니다. 배열에 객체 1개가 필요합니다. categories와 data 개수, 각 그룹의 name과 value 개수가 각각 같아야 합니다.
+**Data Description:** 범주를 X축에, 항목 값을 Y축과 원의 크기에 표시합니다. 배열에 객체 1개가 필요합니다. categories와 data 개수, 각 그룹의 name과 value 개수가 각각 같아야 합니다. 독립적인 X·Y·크기 값은 행 기반 정의에서 `encoding.x`, `encoding.y`, `encoding.value`로 지정합니다.
 
 ## Word Cloud
 
@@ -361,7 +361,7 @@
 }
 ```
 
-**Data Description:** 가중치에 따라 단어의 크기를 표시합니다. name은 단어, weight는 가중치입니다. 수치는 숫자 또는 숫자 문자열을 사용할 수 있습니다.
+**Data Description:** 가중치에 따라 단어의 크기를 표시합니다. name은 단어, weight는 가중치입니다. 수치는 숫자 또는 숫자 문자열을 사용할 수 있습니다. 양수 가중치를 사용하며 100개를 초과하면 가중치가 높은 100개만 표시하고 경고합니다.
 
 ## 누적 막대
 

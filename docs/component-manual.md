@@ -6,7 +6,7 @@
 
 - 요구 사항: Node.js와 npm, Vue 3.5 이상, ECharts 6.x
 - 이 프로젝트는 `private: true`, `UNLICENSED`이며 npm에 공개된 패키지가 아닙니다.
-- 현재 라이브러리 기본 렌더러는 Canvas입니다. 데모 대시보드는 SVG가 기본입니다.
+- 라이브러리와 데모 대시보드의 기본 렌더러는 Canvas입니다. 데모의 SVG 렌더러 스위치로 SVG를 선택할 수 있습니다.
 - 접근 권한이 있는 사용자만 비공개 GitHub 저장소에 접근할 수 있습니다.
 
 ### 소스 실행
@@ -120,7 +120,7 @@ function onPointClick(event: ChartEventPayload) {
 | 트리맵 / 선버스트 / 샌키 | `treemap`, `sunburst`, `sankey` | `path`, `value` |
 | 레이더 / 박스플롯 | `radar`, `boxplot` | `category`, `value`; 선택: `color` |
 | 캔들스틱 | `candlestick` | `x`, `y: ['시가 필드', '종가 필드', '저가 필드', '고가 필드']` |
-| 버블 | `bubble` | `category`, `label`, `value` |
+| 버블 | `bubble` | `category`, `label`, `value`; 선택: 숫자 `x`와 `y`를 함께 지정 |
 | 워드 클라우드 | `word-cloud` | `category`, `value` |
 | 계층형 Polar Pie | `polar-pie` | `label`(ID), `category`(표시명), `path: [부모 ID 필드]`, `value` |
 
@@ -169,10 +169,33 @@ const chart: ContentsChartDefinition = {
 - Point 차트는 `type: 'line'`과 `options: { showPoints: true }`를 사용합니다.
 - Radar의 각 `data` 길이는 `categories` 길이와 같아야 합니다.
 - Bubble은 객체 한 개를 담은 배열이며, 범주와 data 그룹 수 및 각 그룹의 name/value 수가 같아야 합니다.
+- Bubble Contents Data는 범주를 X축으로, 값을 Y축과 원 크기로 사용합니다. 독립적인 X·Y·크기 표현이 필요하면 행 기반 정의에서 숫자 필드 `encoding.x`, `encoding.y`, `encoding.value`를 지정하세요.
+- Bubble의 원 크기는 값의 상대적인 크기를 나타냅니다. 데이터가 겹치는 경우 툴팁이나 표로 값을 확인할 수 있습니다.
+- Word Cloud는 양수 가중치에 따라 글자 크기를 정하고, 단어가 겹치지 않도록 가로·세로로 배치합니다. 100개를 초과하면 가중치가 높은 100개만 표시하고 경고합니다. 데이터 표는 최대 200행을 표시합니다. 표시 공간이 부족하면 차트 크기를 늘리거나 단어 수를 줄이세요.
 - Polar Pie는 루트의 `parent`를 빈 문자열로 설정합니다. ID 중복, 존재하지 않는 부모, 순환 관계는 오류입니다.
-- Gauge의 모든 행이 개별 게이지로 표시됩니다. 기본 범위는 0–100이며 `options.min`, `options.max`로 변경할 수 있습니다.
+- Gauge의 모든 행이 동심원 게이지로 표시됩니다. 범례에서 항목을, 툴팁에서 실제 값을 확인할 수 있습니다. 기본 범위는 0–100이며 `options.min`, `options.max`로 변경할 수 있습니다. 범위 밖의 값은 원형 막대에서 범위 끝에 맞춰 표시하되 실제 값은 유지합니다.
 - 수치에는 유효한 숫자 또는 숫자 문자열을 사용할 수 있습니다. 비어 있지 않은 문자열이 필요한 이름과 유효성 검사 오류를 확인하세요.
 - 데이터 변경 시 `contentsData`가 변경된 새로운 정의를 전달하세요. 예제는 [contents-fixtures.ts](../playground/contents-fixtures.ts)에 있습니다.
+
+독립적인 좌표가 있는 버블 차트 예제:
+
+```ts
+const bubble: ChartDefinition = {
+  schemaVersion: '1.0.0', id: 'bubble-xy', type: 'bubble',
+  data: {
+    fields: [
+      { name: 'group', type: 'string' }, { name: 'name', type: 'string' },
+      { name: 'x', type: 'number' }, { name: 'y', type: 'number' },
+      { name: 'size', type: 'number' },
+    ],
+    rows: [
+      { group: '서버', name: 'A', x: 18, y: 28, size: 30 },
+      { group: '서버', name: 'B', x: 35, y: 70, size: 75 },
+    ],
+  },
+  encoding: { category: 'group', label: 'name', x: 'x', y: 'y', value: 'size' },
+};
+```
 
 ## 5. 속성, 이벤트, 메서드
 

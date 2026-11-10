@@ -6,6 +6,7 @@ import { assertValidDefinition } from '../../src/core/schema';
 import { PREMIUM_DARK_BLUE_PALETTE, resolveTheme } from '../../src/core/theme';
 import type { ChartDefinition, ChartType, Row } from '../../src/core/types';
 import { definitions, type DemoChartType } from '../../playground/fixtures';
+import { contentsDefinitions } from '../../playground/contents-fixtures';
 
 const ECHARTS_TYPES: DemoChartType[] = ['line', 'area', 'bar', 'stacked-bar', 'column', 'pie', 'donut', 'gauge', 'scatter', 'heatmap', 'treemap'];
 
@@ -198,6 +199,85 @@ describe('gauge', () => {
     expect(main.progress.itemStyle.color).toBe('#F6B84A'); // 72 ≥ 70 → warning
     expect(main.detail.formatter(72)).toMatch(/Warning/);
     expect(series(option)[1]!.axisLine.lineStyle.color).toHaveLength(3); // ok | warning | critical zones
+  });
+
+  describe('concentric gauge group', () => {
+    const definition = contentsDefinitions.find(d => d.id === 'contents-gauge')!;
+
+    it('renders every value as a concentric, clockwise ring from the top', () => {
+      const result = build(definition);
+      const rings = series(result.option);
+      expect(rings).toHaveLength(5);
+      expect(rings.map(r => r.center)).toEqual(Array(5).fill(['50%', '45%']));
+      expect(rings.map(r => r.radius)).toEqual([
+        ['72.8%', '80%'], ['63.8%', '71%'], ['54.8%', '62%'], ['45.8%', '53%'], ['36.8%', '44%'],
+      ]);
+      expect(rings.every(r => r.type === 'pie' && r.startAngle === 90 && r.clockwise)).toBe(true);
+      expect(rings.map(r => r.data[0].value)).toEqual([11, 32, 45, 17, 65]);
+      expect(result.lookup(1, 0)).toMatchObject({ row: { label: 'Babal', value: 32 }, value: 32 });
+      expect(result.lookup(1, 1)).toBeUndefined();
+    });
+
+    describe('bubble chart', () => {
+      it('uses values as the vertical coordinate for Contents data, not array index', () => {
+        const input = contentsDefinitions.find(d => d.id === 'contents-bubble')!;
+        const result = build(input);
+        const bubbles = series(result.option);
+        expect(result.option.xAxis.type).toBe('category');
+        expect(result.option.yAxis.type).toBe('value');
+        expect(bubbles[0]!.data[0]).toEqual({ name: 'Today_1', value: ['Today', 51, 51] });
+        expect(bubbles[0]!.data[1]).toEqual({ name: 'Today_2', value: ['Today', 24, 24] });
+        expect(bubbles[0]!.symbolSize([0, 0, 90])).toBeGreaterThan(bubbles[0]!.symbolSize([0, 0, 20]));
+        expect(result.lookup(0, 0)?.row).toMatchObject({ label: 'Today_1', value: 51 });
+      });
+
+      describe('word cloud', () => {
+        it('limits large inputs by weight and reports excluded words', () => {
+          const def = contentsDefinitions.find(d => d.id === 'contents-word-cloud')!;
+          const input = { ...def, contentsData: Array.from({ length: 120 }, (_, i) => ({ name: `word${i}`, weight: i + 1 })) };
+          const result = build(input);
+          expect(series(result.option)[0]!.data).toHaveLength(100);
+          expect(result.lookup(0, 0)?.row).toMatchObject({ name: 'word119', weight: 120 });
+          expect(result.warnings.join(' ')).toContain('100개');
+        });
+      });
+
+      it('supports independent numeric x/y coordinates and bubble size', () => {
+        const input = {
+          schemaVersion: '1.0.0', id: 'bubble-xy', type: 'bubble',
+          data: { fields: [
+            { name: 'group', type: 'string' }, { name: 'name', type: 'string' },
+            { name: 'x', type: 'number' }, { name: 'y', type: 'number' }, { name: 'size', type: 'number' },
+          ], rows: [{ group: 'A', name: 'One', x: 10, y: 30, size: 50 }] },
+          encoding: { category: 'group', label: 'name', x: 'x', y: 'y', value: 'size' },
+        };
+        const result = build(input);
+        expect(result.option.xAxis.type).toBe('value');
+        expect(series(result.option)[0]!.data[0]).toEqual({ name: 'One', value: [10, 30, 50] });
+        expect(result.option.tooltip.formatter({ seriesIndex: 0, dataIndex: 0, color: '#000' })).toContain('50');
+        expect(() => build({ ...input, encoding: { ...input.encoding, y: undefined } })).toThrow();
+        expect(() => build({ ...input, encoding: { ...input.encoding, y: ['y'] } })).toThrow();
+      });
+    });
+
+    it('honors custom ranges and clamps geometry while preserving source values', () => {
+      const result = build({ ...definition, options: { min: 20, max: 40 } });
+      expect(series(result.option).map(r => r.data.map((d: Opt) => d.value))).toEqual([
+        [0, 20], [12, 8], [20, 0], [0, 20], [20, 0],
+      ]);
+      expect(result.lookup(2, 0)?.value).toBe(45);
+      expect(result.option.tooltip.formatter({ seriesIndex: 2, dataIndex: 0 })).toContain('45');
+    });
+
+    it('keeps ring radii ordered and positive for many entries', () => {
+      const data = Array.from({ length: 60 }, (_, i) => ({ col0: `item-${i}`, col1: i }));
+      const rings = series(build({ ...definition, contentsData: data }).option);
+      expect(rings).toHaveLength(60);
+      for (const ring of rings) {
+        expect(parseFloat(ring.radius[0])).toBeGreaterThan(0);
+        expect(parseFloat(ring.radius[0])).toBeLessThan(parseFloat(ring.radius[1]));
+      }
+    });
   });
 
   it('respects min/max', () => {
