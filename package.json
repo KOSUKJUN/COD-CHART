@@ -1,0 +1,52 @@
+{
+  "name": "@codvil/chart",
+  "version": "0.1.0",
+  "description": "CODVIL Chart Library — Vue 3 + Apache ECharts chart components",
+  "main": "./dist/codvil-chart.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -p tsconfig.build.json && vite build --mode lib",
+    "build:demo": "vite build",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "license": "UNLICENSED",
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "@vue/test-utils": "^2.5.1",
+    "echarts": "^6.1.0",
+    "jsdom": "^31.0.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.7",
+    "vitest": "^5.1.0",
+    "vue": "^3.5.45",
+    "vue-tsc": "^3.3.14"
+  },
+  "private": true,
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "module": "./dist/codvil-chart.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/codvil-chart.js"
+    },
+    "./core": {
+      "types": "./dist/types/core/index.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./style.css": "./dist/codvil-chart.css"
+  },
+  "files": [
+    "dist"
+  ],
+  "peerDependencies": {
+    "echarts": "^6.0.0",
+    "vue": "^3.5.0"
+  }
+}

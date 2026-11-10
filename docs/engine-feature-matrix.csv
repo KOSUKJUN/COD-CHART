@@ -1,0 +1,51 @@
+engine,version,feature_id,category,common_api,native_escape_hatch,renderer_limits,status,test,notes
+echarts,6.1.0,series.line,series,line/area,engineOptions.echarts.series[i],,supported,tests/adapter/build.test.ts,sampling=lttb; markLine thresholds
+echarts,6.1.0,series.bar,series,bar/column/stacked-bar,engineOptions.echarts.series[i],,supported,tests/adapter/build.test.ts,percent stack computed in adapter; large mode >4000 points
+echarts,6.1.0,series.pie,series,pie/donut,engineOptions.echarts.series[i],,supported,tests/adapter/build.test.ts,padAngle; centre total via silent series
+echarts,6.1.0,series.gauge,series,gauge,engineOptions.echarts.series[i],,supported,tests/adapter/build.test.ts,progress + threshold zone band
+echarts,6.1.0,series.scatter,series,scatter,engineOptions.echarts.series[i],,supported,tests/adapter/build.test.ts,area-proportional size; large mode >5000
+echarts,6.1.0,series.heatmap,series,heatmap,engineOptions.echarts.series[i],,supported,tests/adapter/build.test.ts,cartesian heatmap only (calendar planned)
+echarts,6.1.0,series.treemap,series,treemap,engineOptions.echarts.series[i],,supported,tests/adapter/build.test.ts,zoomToNode drilldown + breadcrumb
+echarts,6.1.0,series.boxplot,series,,,,planned,,extension catalogue (Box Plot)
+echarts,6.1.0,series.candlestick,series,,,,planned,,extension catalogue
+echarts,6.1.0,series.funnel,series,,,,planned,,extension catalogue
+echarts,6.1.0,series.sankey,series,,,,planned,,extension catalogue
+echarts,6.1.0,series.graph,series,,,,planned,,extension catalogue (Network Graph)
+echarts,6.1.0,series.chord,series,,,,planned,,new in 6.x
+echarts,6.1.0,series.radar,series,,,,planned,,
+echarts,6.1.0,series.sunburst,series,,,,planned,,
+echarts,6.1.0,series.tree,series,,,,planned,,
+echarts,6.1.0,series.themeRiver,series,,,,planned,,
+echarts,6.1.0,series.parallel,series,,,,planned,,
+echarts,6.1.0,series.pictorialBar,series,,,,planned,,
+echarts,6.1.0,series.effectScatter,series,,,,planned,,motion-heavy; needs reduced-motion policy
+echarts,6.1.0,series.lines,series,,,,planned,,
+echarts,6.1.0,series.map,series,,,,excluded,,geo data contract out of scope (spec §2)
+echarts,6.1.0,series.custom,series,,,,excluded,,requires functions in definition — conflicts with ADR-0002
+echarts,6.1.0,component.tooltip,component,interactions:tooltip,engineOptions.echarts.tooltip,,supported,tests/adapter/build.test.ts,HTML escaped; formatter/renderMode not overridable
+echarts,6.1.0,component.legend(scroll),component,options.legend,engineOptions.echarts.legend,,supported,,legend only for >=2 series
+echarts,6.1.0,component.dataZoom(inside+slider),component,interactions:zoom,engineOptions.echarts.dataZoom,,supported,,ctrl+wheel to avoid scroll hijack
+echarts,6.1.0,component.visualMap(continuous),component,heatmap,engineOptions.echarts.visualMap,,supported,,validated sequential ramp
+echarts,6.1.0,component.markLine,component,options.thresholds,engineOptions.echarts.series[i].markLine,,supported,,
+echarts,6.1.0,component.aria(label+decal),accessibility,automatic + options.patterns,engineOptions.echarts.aria,,supported,,summary from core a11y
+echarts,6.1.0,component.grid(outerBounds),component,automatic,engineOptions.echarts.grid,,supported,,v6 outerBoundsMode replaces containLabel
+echarts,6.1.0,component.title,component,,engineOptions.echarts.title,,supported(escape hatch),,title rendered in DOM header by default
+echarts,6.1.0,component.markPoint,component,,,,planned,,
+echarts,6.1.0,component.markArea,component,,,,planned,,threshold bands for cartesian
+echarts,6.1.0,component.brush,interaction,,,,planned,,brush.change event
+echarts,6.1.0,component.toolbox,component,,,,excluded,,replaced by DOM actions (table view / PNG export)
+echarts,6.1.0,component.timeline,component,,,,planned,,
+echarts,6.1.0,component.calendar,coordinate,,,,planned,,Calendar Heatmap
+echarts,6.1.0,component.polar,coordinate,,,,planned,,
+echarts,6.1.0,component.singleAxis,coordinate,,,,planned,,
+echarts,6.1.0,component.matrix,coordinate,,,,planned,,new in 6.x
+echarts,6.1.0,component.thumbnail,component,,,,planned,,new in 6.x
+echarts,6.1.0,component.dataset+transform,data,,,,planned,,core normalisation currently used instead
+echarts,6.1.0,feature.universalTransition,animation,automatic,,,supported,,stable series ids
+echarts,6.1.0,feature.labelLayout,label,automatic,,,supported,,
+echarts,6.1.0,feature.axisBreak,axis,,,,planned,,new in 6.x
+echarts,6.1.0,renderer.canvas,renderer,renderer:canvas,,,supported,,default; dirty-rect enabled
+echarts,6.1.0,renderer.svg,renderer,renderer:svg,,,supported,tests/adapter/lifecycle.test.ts,required for SVG export
+echarts,6.1.0,export.getDataURL,export,handle.exportImage,,svg export requires svg renderer,supported,tests/adapter/lifecycle.test.ts,
+echarts,6.1.0,i18n.KO,i18n,locale,,,supported,,langKO-obj registered via registerLocale
+echarts,6.1.0,ssr,renderer,,,,planned,,server-side SVG rendering not wired
