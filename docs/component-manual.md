@@ -12,7 +12,7 @@
 ### 소스 실행
 
 ```bash
-git clone https://github.com/KOSUKJUN/cod-chart.git
+git clone https://github.com/KOSUKJUN/COD-CHART.git
 cd cod-chart
 npm ci
 npm run dev

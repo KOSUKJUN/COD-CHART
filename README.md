@@ -137,6 +137,8 @@ handle.destroy(); // 엔진 인스턴스·타이머·옵저버·구독 모두 �
 ## 문서
 
 - [컴포넌트 사용 매뉴얼](docs/component-manual.md) — 설치, Contents Data, 차트 종류 및 API
+- [사용자·개발자 매뉴얼 (Word)](docs/manual/COD-CHART-Manual-ko.docx)
+- 차트별 Contents 명세: [웹에서 보기](docs/manual/COD-CHART-Contents-ko.md) · [PDF](docs/manual/COD-CHART-Contents-ko.pdf) · [Word](docs/manual/COD-CHART-Contents-ko.docx)
 - [아키텍처](docs/architecture.md) · [컴포넌트 카탈로그](docs/component-catalog.md) · [엔진 기능 매트릭스](docs/engine-feature-matrix.csv)
 - ADR: [0001 ECharts 단일 엔진](docs/decisions/0001-echarts-single-engine.md) · [0002 정의 보안 경계](docs/decisions/0002-definition-security-boundary.md) · [0003 테마/팔레트 검증](docs/decisions/0003-theme-palette-validation.md) · [0004 갱신·애니메이션 정책](docs/decisions/0004-update-and-animation-policy.md)
 - [서드파티 고지](THIRD-PARTY-NOTICES.md)
