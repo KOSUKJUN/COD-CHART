@@ -139,3 +139,33 @@ describe('createChart + EChartsAdapter (SVG renderer, jsdom)', () => {
     expect(h.exportImage({ type: 'svg' })).toMatch(/^data:image\/svg/);
   });
 });
+
+describe('3D style and animation replay (real ECharts pipeline)', () => {
+  it.each(ECHARTS_TYPES)('%s renders in 3D mode', async (type) => {
+    const el = container();
+    const h = createChart(el, { ...svg(type), theme: { effects: { depth: true } } }, { reducedMotion: true });
+    handles.push(h);
+    await nextFrame();
+    expect(h.getState().status).toBe('ready');
+    expect(el.querySelector('svg')).not.toBeNull();
+  });
+
+  it('replayAnimation clears and redraws the same instance without refetching', async () => {
+    const el = container();
+    const h = createChart(el, svg('column'));
+    handles.push(h);
+    await nextFrame();
+    const inst = echarts.getInstanceByDom(el)!;
+    const clear = vi.spyOn(inst, 'clear');
+    const setOption = vi.spyOn(inst, 'setOption');
+    const rows = h.getRows();
+    h.replayAnimation();
+    expect(clear).toHaveBeenCalledTimes(1);
+    // clear() itself calls setOption internally; the last call re-applies the full option.
+    expect(setOption).toHaveBeenLastCalledWith(expect.objectContaining({ series: expect.any(Array) }), { notMerge: true });
+    expect(echarts.getInstanceByDom(el)).toBe(inst);
+    expect(h.getRows()).toBe(rows);
+    h.destroy();
+    expect(() => h.replayAnimation()).not.toThrow();
+  });
+});

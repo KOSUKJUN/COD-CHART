@@ -192,6 +192,11 @@ export interface ThemeSpec {
   overrides?: Partial<Record<ThemeTokenName, string>>;
   /** Replace the categorical palette (validated hex list). */
   palette?: string[];
+  /**
+   * CODVIL effects. gradient/glow are on by default (turn off for print or low-power displays).
+   * depth (default off) renders every chart in a 3D style: extruded bars, thick pies, raised marks.
+   */
+  effects?: { gradient?: boolean; glow?: boolean; depth?: boolean };
 }
 
 export type AnimationPreset = 'entrance' | 'smooth-update' | 'emphasis' | 'none';

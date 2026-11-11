@@ -19,6 +19,8 @@ export interface ResolvedTheme {
   status: Record<StatusLevel, string>;
   fontFamily: string;
   radius: { sm: number; md: number; lg: number };
+  /** CODVIL dark-surface effects: value-end gradients, soft glow, and the opt-in 3D style. */
+  effects: { gradient: boolean; glow: boolean; depth: boolean };
 }
 
 export const PREMIUM_DARK_BLUE_TOKENS: ThemeTokens = {
@@ -95,6 +97,7 @@ export function resolveTheme(spec?: ThemeSpec): ResolvedTheme {
     fontFamily:
       "Pretendard, 'Inter', system-ui, -apple-system, 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif",
     radius: { sm: 6, md: 10, lg: 14 },
+    effects: { gradient: spec?.effects?.gradient !== false, glow: spec?.effects?.glow !== false, depth: spec?.effects?.depth === true },
   };
 }
 

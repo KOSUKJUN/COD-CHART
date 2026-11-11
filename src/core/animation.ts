@@ -16,17 +16,24 @@ export interface ResolvedMotion {
   emphasisMs: number;
   easing: 'cubicOut';
   updateEasing: 'cubicInOut';
-  /** Max per-item stagger for the entrance (kept short so dashboards settle quickly). */
+  /** Per-item step of the sequential entrance (total spread is capped by the adapter). */
   staggerMs: number;
+  /** Gauge arc/needle entrance sweep — slower than marks so the rotation reads as physical. */
+  sweepMs: number;
+  /** Gauge value-change sweep. */
+  sweepUpdateMs: number;
+  /** Data is streaming/polling (an update interval has been observed) → live emphasis. */
+  live: boolean;
 }
 
-export const MOTION_DEFAULTS = { entranceMs: 500, updateMs: 400, emphasisMs: 150, staggerMs: 12 } as const;
+export const MOTION_DEFAULTS = { entranceMs: 500, updateMs: 400, emphasisMs: 150, staggerMs: 40, sweepMs: 1200, sweepUpdateMs: 800 } as const;
 
 /** Updates arriving faster than this make update tweens counter-productive. */
 export const FAST_UPDATE_THRESHOLD_MS = 1000;
 
 const OFF: ResolvedMotion = {
   enabled: false, entranceMs: 0, updateMs: 0, emphasisMs: 0, easing: 'cubicOut', updateEasing: 'cubicInOut', staggerMs: 0,
+  sweepMs: 0, sweepUpdateMs: 0, live: false,
 };
 
 /**
@@ -34,9 +41,11 @@ const OFF: ResolvedMotion = {
  * `enabled: false` / preset `none` → update-rate throttle → preset durations.
  */
 export function resolveMotion(spec: AnimationSpec | undefined, env: MotionEnvironment = {}): ResolvedMotion {
-  if (env.reducedMotion) return OFF;
-  if (env.productMotionEnabled === false) return OFF;
-  if (spec?.enabled === false || spec?.preset === 'none') return OFF;
+  // Live emphasis still applies without motion (as a static marker), so it survives OFF.
+  const live = env.updateIntervalMs !== undefined;
+  if (env.reducedMotion || env.productMotionEnabled === false || spec?.enabled === false || spec?.preset === 'none') {
+    return { ...OFF, live };
+  }
 
   const scale = spec?.durationMs !== undefined ? spec.durationMs / MOTION_DEFAULTS.updateMs : 1;
   const clamp = (ms: number) => Math.max(0, Math.min(5000, Math.round(ms)));
@@ -47,6 +56,8 @@ export function resolveMotion(spec: AnimationSpec | undefined, env: MotionEnviro
     if (env.updateIntervalMs < 300) updateMs = 0;
     else if (env.updateIntervalMs < FAST_UPDATE_THRESHOLD_MS) updateMs = Math.min(updateMs, Math.round(env.updateIntervalMs * 0.4));
   }
+  // Gauge sweeps keep their 2× ratio to the update tween, so throttled streams shorten them too.
+  const sweepUpdateMs = Math.round(updateMs * (MOTION_DEFAULTS.sweepUpdateMs / MOTION_DEFAULTS.updateMs));
   return {
     enabled: true,
     entranceMs: clamp(MOTION_DEFAULTS.entranceMs * scale),
@@ -55,6 +66,9 @@ export function resolveMotion(spec: AnimationSpec | undefined, env: MotionEnviro
     easing: 'cubicOut',
     updateEasing: 'cubicInOut',
     staggerMs: MOTION_DEFAULTS.staggerMs,
+    sweepMs: clamp(MOTION_DEFAULTS.sweepMs * scale),
+    sweepUpdateMs: clamp(sweepUpdateMs),
+    live,
   };
 }
 

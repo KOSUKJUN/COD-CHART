@@ -31,6 +31,8 @@ export interface RendererAdapter {
   resize(width?: number, height?: number): void;
   onEvent(listener: (event: AdapterEvent) => void): () => void;
   exportImage?(options?: ExportOptions): string | null;
+  /** Re-run the entrance animation from an empty canvas (no data refetch). */
+  replay?(): void;
   /** Non-fatal notices produced while building the render (e.g. series folded). */
   readonly warnings?: string[];
   destroy(): void;

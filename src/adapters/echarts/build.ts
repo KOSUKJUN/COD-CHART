@@ -11,6 +11,7 @@ import { escapeHtml, fieldLabel, formatAxisValue, formatTime, formatValue } from
 import { deepMerge, isPlainObject } from '../../core/sanitize';
 import { ALL_PAIRS_SAFE_SLOTS, STATUS_META, statusForValue, type ResolvedTheme } from '../../core/theme';
 import type { ChartDefinition, FieldDef, Row, StatusLevel } from '../../core/types';
+import { alpha, DEPTH_PX, deltaText, depthShadow, fillGradient, glow, isEffectSeries, pulseSeries, shade, sphere, stagger, type PulsePoint } from './effects';
 import { layoutWords } from './word-layout';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -51,12 +52,6 @@ interface Ctx extends RenderContext {
   slots: SlotMap;
 }
 
-const alpha = (hex: string, a: number) => {
-  const h = hex.replace('#', '');
-  const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h.slice(0, 6), 16);
-  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
-};
-
 // ── Shared pieces ─────────────────────────────────────────────────────────
 
 function baseOption(ctx: Ctx): Opt {
@@ -70,7 +65,10 @@ function baseOption(ctx: Ctx): Opt {
     animationEasing: motion.easing,
     animationDurationUpdate: motion.updateMs,
     animationEasingUpdate: motion.updateEasing,
-    animationDelay: motion.enabled ? (i: number) => Math.min(i * motion.staggerMs, 240) : 0,
+    // Sequential entrance (series builders refine this with their own item count).
+    animationDelay: stagger(motion, ctx.rows.length),
+    // Updates start together; only the entrance is sequential.
+    animationDelayUpdate: 0,
     stateAnimation: { duration: motion.emphasisMs, easing: 'cubicOut' },
     aria: {
       enabled: true,
@@ -86,17 +84,20 @@ function tooltipBase(t: ResolvedTheme, trigger: 'axis' | 'item', pointer?: 'line
     trigger,
     confine: true,
     renderMode: 'html',
-    backgroundColor: t.tokens.tooltipBg,
+    // Glass panel: translucent elevated surface + backdrop blur + faint accent glow.
+    backgroundColor: alpha(t.tokens.tooltipBg, 0.88),
     borderColor: t.tokens.tooltipBorder,
     borderWidth: 1,
     padding: [10, 12],
     textStyle: { color: t.tokens.textPrimary, fontFamily: t.fontFamily, fontSize: 12 },
-    extraCssText: `border-radius:${t.radius.md}px;box-shadow:0 12px 32px rgba(0,0,0,.32);`,
+    extraCssText:
+      `border-radius:${t.radius.md}px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);` +
+      `box-shadow:0 12px 32px rgba(0,0,0,.36)${t.effects.glow ? `,0 0 24px ${alpha(t.tokens.accentBlue, 0.16)}` : ''};`,
     transitionDuration: 0.15,
     ...(pointer
       ? {
           axisPointer: pointer === 'line'
-            ? { type: 'line', lineStyle: { color: t.tokens.textMuted, width: 1, type: 'dashed' }, label: { show: false } }
+            ? { type: 'line', lineStyle: { color: alpha(t.tokens.accentCyan, 0.55), width: 1, type: 'dashed' }, label: { show: false } }
             : { type: 'shadow', shadowStyle: { color: t.tokens.selection } },
         }
       : {}),
@@ -107,10 +108,12 @@ function marker(color: string): string {
   return `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:8px;background:${escapeHtml(color)}"></span>`;
 }
 
-function tooltipRow(color: string, name: string, value: string, strong = false): string {
+function tooltipRow(color: string, name: string, value: string, strong = false, detail = ''): string {
   return `<div style="display:flex;align-items:center;gap:16px;justify-content:space-between;line-height:20px">` +
     `<span style="display:flex;align-items:center;color:inherit;opacity:.82">${marker(color)}${escapeHtml(name)}</span>` +
-    `<span style="font-variant-numeric:tabular-nums;font-weight:${strong ? 700 : 600}">${escapeHtml(value)}</span></div>`;
+    `<span style="font-variant-numeric:tabular-nums;font-weight:${strong ? 700 : 600}">${escapeHtml(value)}` +
+    (detail ? `<span style="margin-left:8px;font-size:11px;font-weight:500;opacity:.62">${escapeHtml(detail)}</span>` : '') +
+    `</span></div>`;
 }
 
 function tooltipHeader(text: string): string {
@@ -306,12 +309,27 @@ function buildCartesian(ctx: Ctx): BuildResult {
   const selection = def.interactions?.includes('selection');
   const totalPoints = series.reduce((a, s) => a + (xIsContinuous ? s.pairs.length : s.values.length), 0);
   const large = totalPoints > 4000;
+  // Shadows on thousands of points cost more than they add.
+  const fxTheme: ResolvedTheme = large ? { ...t, effects: { ...t.effects, glow: false, depth: false } } : t;
+  const colors = series.map((s) => t.palette[slotFor(ctx.slots, s.name) % t.palette.length]!);
+  const thresholds = def.options?.thresholds ?? [];
+  const pointCount = xIsContinuous ? Math.max(0, ...series.map((s) => s.pairs.length)) : categories.length;
 
-  const echSeries = series.map((s, si) => {
-    const color = t.palette[slotFor(ctx.slots, s.name) % t.palette.length]!;
-    const data = xIsContinuous
+  const echSeries: Opt[] = series.map((s, si): Opt => {
+    const color = colors[si]!;
+    const data: unknown[] = xIsContinuous
       ? s.pairs
       : s.values.map((v, i) => (percent ? (v == null ? null : totals[i] ? Math.max(0, v) / totals[i]! : 0) : v));
+    // Live event emphasis on bars: a breached threshold lights the bar in its status colour.
+    if (isBarLike && thresholds.length && !stacked) {
+      s.values.forEach((v, i) => {
+        if (v == null) return;
+        const level = statusForValue(v, thresholds);
+        if (level === 'ok') return;
+        const c = t.status[level];
+        data[i] = { value: data[i], itemStyle: { borderColor: c, borderWidth: 1.5, ...glow(fxTheme, c, 2) } };
+      });
+    }
     const common: Opt = {
       // Stable id: lets replaceMerge keep the series across data updates so values tween
       // instead of the series being re-created (which would replay the entrance animation).
@@ -326,11 +344,33 @@ function buildCartesian(ctx: Ctx): BuildResult {
       ...(si === 0 ? { markLine: thresholdMarkLine(ctx, horizontal) } : {}),
       universalTransition: { enabled: true },
     };
+    if (isBarLike && t.effects.depth && !large) {
+      const display = s.values.map((v, i) => (percent ? (v == null ? null : totals[i] ? Math.max(0, v) / totals[i]! : 0) : v));
+      const bases = s.values.map((_, i) => {
+        if (!stacked) return 0;
+        let acc = 0;
+        for (let k = 0; k < si; k++) {
+          const raw = series[k]!.values[i];
+          if (raw != null && raw > 0) acc += percent ? (totals[i] ? raw / totals[i]! : 0) : raw;
+        }
+        return acc;
+      });
+      const breach = s.values.map((v) => (thresholds.length && !stacked && v != null && statusForValue(v, thresholds) !== 'ok' ? t.status[statusForValue(v, thresholds)] : null));
+      return extrudedBars(ctx, {
+        common, color, display, bases, breach, horizontal, stacked,
+        slot: stacked ? 0 : si, slots: stacked ? 1 : series.length,
+        label: labelForBars(ctx, horizontal, yField, percent),
+        delay: stagger(ctx.motion, pointCount, si),
+      });
+    }
     if (isBarLike) {
       const last = si === series.length - 1;
       const r = stacked && !last ? 0 : 4;
       return {
         ...common,
+        // Sequential entrance: bars rise one category after another, series offset slightly.
+        animationDelay: stagger(ctx.motion, pointCount, si),
+        emphasis: { ...common.emphasis, itemStyle: glow(fxTheme, color, 1.8) },
         type: 'bar',
         barMaxWidth: 28,
         barMinHeight: 1,
@@ -340,7 +380,8 @@ function buildCartesian(ctx: Ctx): BuildResult {
         selectedMode: selection ? 'single' : false,
         select: { itemStyle: { borderColor: t.tokens.focus, borderWidth: 2 } },
         itemStyle: {
-          color,
+          // Value end lit, fading toward the baseline (subtler inside stacks so segments stay distinct).
+          color: fillGradient(t, color, horizontal ? 'right' : 'up', stacked ? 0.78 : 0.42),
           borderRadius: horizontal ? [0, r, r, 0] : [r, r, 0, 0],
           // 2px surface gap between stacked segments.
           ...(stacked ? { borderColor: t.tokens.bgSurface, borderWidth: 1 } : {}),
@@ -353,29 +394,78 @@ function buildCartesian(ctx: Ctx): BuildResult {
     return {
       ...common,
       type: 'line',
+      // Lines draw in left → right (clip animation); each series starts slightly after the previous.
+      animationDelay: ctx.motion.enabled ? si * 90 : 0,
       smooth: def.options?.smooth ? 0.35 : false,
       showSymbol: def.options?.showPoints ?? false,
       symbol: 'circle',
       symbolSize: 8,
       connectNulls: false,
       sampling: 'lttb',
-      lineStyle: { width: 2, color },
+      // 3D style: the line casts a drop shadow onto the surface below it (replaces the glow).
+      lineStyle: { width: t.effects.depth ? 2.5 : 2, color, ...glow(fxTheme, color), ...depthShadow(fxTheme) },
       itemStyle: { color, borderColor: t.tokens.bgSurface, borderWidth: 2 },
       ...(area
         ? {
             areaStyle: stacked
-              ? { opacity: 0.38, color }
+              ? { opacity: 0.38, color, ...depthShadow(fxTheme, 0.8) }
               : {
                   color: {
                     type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-                    colorStops: [{ offset: 0, color: alpha(color, 0.32) }, { offset: 1, color: alpha(color, 0.02) }],
+                    colorStops: [{ offset: 0, color: alpha(color, t.effects.gradient ? 0.4 : 0.32) }, { offset: 1, color: alpha(color, 0.02) }],
                   },
+                  ...depthShadow(fxTheme, 0.8),
                 },
           }
         : {}),
-      emphasis: { ...common.emphasis, scale: 1.4, lineStyle: { width: 2.5 } },
+      emphasis: { ...common.emphasis, scale: 1.4, lineStyle: { width: 2.5, ...glow(fxTheme, color, 1.6) }, itemStyle: glow(fxTheme, color, 2) },
     };
   });
+
+  // ── Event emphasis overlays (line / area) ──
+  if (!isBarLike) {
+    // Plotted y for (series, index): stacked series sit on the running positive sum.
+    const plottedY = (si: number, i: number): number | null => {
+      const own = series[si]!.values[i];
+      if (own == null) return null;
+      if (!stacked) return own;
+      let acc = 0;
+      for (let k = 0; k <= si; k++) acc += Math.max(0, series[k]!.values[i] ?? 0);
+      return percent ? (totals[i] ? acc / totals[i]! : 0) : acc;
+    };
+    series.forEach((s, si) => {
+      // Live: a ripple on the newest point of every streaming series.
+      if (ctx.motion.live && !(stacked && xIsContinuous)) {
+        let point: unknown[] | null = null;
+        if (xIsContinuous) {
+          for (let i = s.pairs.length - 1; i >= 0 && !point; i--) if (s.pairs[i]![1] != null) point = s.pairs[i]!;
+        } else {
+          for (let i = s.values.length - 1; i >= 0 && !point; i--) {
+            const y = plottedY(si, i);
+            if (y != null) point = [i, y];
+          }
+        }
+        if (point) echSeries.push(pulseSeries(fxTheme, ctx.motion, `live:${s.name}`, s.name, [{ value: point, color: colors[si]! }]));
+      }
+      // Threshold events: ring the most recent breaches in their status colour.
+      if (thresholds.length && !stacked) {
+        const raw = xIsContinuous ? s.pairs.map((p) => p[1]) : s.values;
+        const hits: PulsePoint[] = [];
+        for (let i = raw.length - 1; i >= 0 && hits.length < 6; i--) {
+          const v = raw[i];
+          if (v == null) continue;
+          const level = statusForValue(v, thresholds);
+          if (level !== 'ok') hits.push({ value: xIsContinuous ? s.pairs[i]! : [i, v], color: t.status[level] });
+        }
+        if (hits.length) echSeries.push(pulseSeries(fxTheme, ctx.motion, `breach:${s.name}`, s.name, hits.reverse(), 7));
+      }
+    });
+  }
+  const prevValue = (si: number, di: number): unknown => {
+    const s = series[si];
+    if (!s || di < 1) return undefined;
+    return xIsContinuous ? s.pairs[di - 1]?.[1] : s.values[di - 1];
+  };
 
   const xLabelFormatter = (v: unknown) => (xField?.type === 'time' ? formatTime(v, locale) : String(v));
   const categoryAxis: Opt = xIsContinuous
@@ -407,7 +497,7 @@ function buildCartesian(ctx: Ctx): BuildResult {
       ...tooltipBase(t, 'axis', isBarLike ? 'shadow' : 'line'),
       show: def.interactions?.includes('tooltip') !== false,
       formatter: (params: Opt | Opt[]) => {
-        const list = (Array.isArray(params) ? params : [params]).filter((p) => p.value !== null && p.value !== undefined);
+        const list = (Array.isArray(params) ? params : [params]).filter((p) => !isEffectSeries(p) && p.value !== null && p.value !== undefined);
         if (!list.length) return '';
         const p0 = list[0]!;
         const head = xIsContinuous ? xLabelFormatter(Array.isArray(p0.value) ? p0.value[0] : p0.axisValue) : String(p0.axisValueLabel ?? p0.name);
@@ -418,7 +508,13 @@ function buildCartesian(ctx: Ctx): BuildResult {
             const src = series[p.seriesIndex]?.values[p.dataIndex];
             text = `${Math.round((raw as number) * 1000) / 10}% · ${formatValue(src, yField, { locale })}`;
           }
-          return tooltipRow(p.color as string, p.seriesName, text);
+          // Hover detail: change vs. the previous point, plus the status when a threshold is crossed.
+          const own = percent ? series[p.seriesIndex]?.values[p.dataIndex] : raw;
+          const delta = deltaText(own, prevValue(p.seriesIndex, p.dataIndex), locale);
+          const level = thresholds.length && typeof own === 'number' ? statusForValue(own, thresholds) : 'ok';
+          const status = level !== 'ok' ? `${STATUS_META[level].icon} ${STATUS_META[level].label}` : '';
+          // Gradient fills make p.color an object; the marker uses the solid series colour.
+          return tooltipRow(colors[p.seriesIndex] ?? (p.color as string), p.seriesName, text, false, [delta, status].filter(Boolean).join(' · '));
         });
         if (stacked && !percent && list.length > 1) {
           const total = list.reduce((a, p) => a + (Number(Array.isArray(p.value) ? p.value[1] : p.value) || 0), 0);
@@ -454,6 +550,108 @@ function buildCartesian(ctx: Ctx): BuildResult {
   };
 }
 
+interface ExtrudeInput {
+  common: Opt;
+  color: string;
+  /** Plotted value per category (already percent-normalised). */
+  display: (number | null)[];
+  /** Stack base per category (0 when not stacked). */
+  bases: number[];
+  /** Status colour per category when a threshold is breached. */
+  breach: (string | null)[];
+  horizontal: boolean;
+  stacked: boolean;
+  slot: number;
+  slots: number;
+  label: Opt;
+  delay: number | ((i: number) => number);
+}
+
+/**
+ * 3D bar: a custom series drawing each bar as a cuboid — gradient front face, lit
+ * top face and shaded side face. Layout mirrors the 2D bar rules (28px max width,
+ * 12% bar gap, 28/36% category gap) so switching styles doesn't move anything.
+ * Data is [category, value, base, top]; base/top are encoded on the value axis so
+ * stacks fit the axis extent, and the tooltip reads value[1] as for 2D bars.
+ */
+function extrudedBars(ctx: Ctx, b: ExtrudeInput): Opt {
+  const t = ctx.theme;
+  const { horizontal, color } = b;
+  const top = shade(color, 0.28);
+  const side = shade(color, -0.38);
+  const catGap = b.slots > 1 ? 0.28 : 0.36;
+  const delayOf = (i: number) => (typeof b.delay === 'function' ? b.delay(i) : b.delay);
+  // Bases are precomputed; letting ECharts stack the custom series too would double-count.
+  const { stack: _stack, stackStrategy: _strategy, ...common } = b.common;
+  return {
+    ...common,
+    type: 'custom',
+    data: b.display.map((v, i) => [i, v, b.bases[i]!, v == null ? null : b.bases[i]! + v]),
+    encode: horizontal ? { y: 0, x: [2, 3] } : { x: 0, y: [2, 3] },
+    // Top faces may poke above the axis max by a few px; don't clip them.
+    clip: false,
+    renderItem: (params: Opt, api: Opt) => {
+      const i = api.value(0) as number;
+      const v = api.value(1);
+      if (v == null || Number.isNaN(v)) return null;
+      const base = api.value(2) as number;
+      const band = horizontal ? api.size([0, 1])[1] : api.size([1, 0])[0];
+      const usable = band * (1 - catGap);
+      const barW = Math.max(2, Math.min(28, usable / (b.slots + (b.slots - 1) * 0.12)));
+      const groupW = b.slots * barW + (b.slots - 1) * barW * 0.12;
+      const offset = -groupW / 2 + b.slot * barW * 1.12;
+      const d = Math.max(2, Math.min(DEPTH_PX, barW * 0.32));
+      const w = barW - d; // front face; the side face fills the rest of the slot
+      const p0 = api.coord(horizontal ? [base, i] : [i, base]);
+      const p1 = api.coord(horizontal ? [base + v, i] : [i, base + v]);
+      const status = b.breach[params.dataIndex];
+      const frontFill = fillGradient(t, color, horizontal ? 'right' : 'up', b.stacked ? 0.78 : 0.5);
+      const edge = status ? { stroke: status, lineWidth: 1.5 } : {};
+      const children: Opt[] = [];
+      let origin: [number, number];
+      let labelAt: Opt;
+      if (horizontal) {
+        const y = p0[1] + offset + d; // top face rises by d into the slot
+        const x0 = Math.min(p0[0], p1[0]);
+        const x1 = Math.max(p0[0], p1[0]);
+        children.push(
+          { type: 'rect', shape: { x: x0, y, width: Math.max(1, x1 - x0), height: w }, style: { fill: frontFill, ...edge }, emphasis: { style: glow(t, color, 1.8) } },
+          { type: 'polygon', shape: { points: [[x0, y], [x0 + d, y - d], [x1 + d, y - d], [x1, y]] }, style: { fill: top } },
+          { type: 'polygon', shape: { points: [[x1, y], [x1 + d, y - d], [x1 + d, y + w - d], [x1, y + w]] }, style: { fill: side } },
+        );
+        origin = [p0[0], y];
+        labelAt = { x: x1 + d + 6, y: y + w / 2 - d / 2, align: 'left', verticalAlign: 'middle' };
+      } else {
+        const x = p0[0] + offset;
+        const y0 = Math.min(p0[1], p1[1]);
+        const y1 = Math.max(p0[1], p1[1]);
+        children.push(
+          { type: 'rect', shape: { x, y: y0, width: w, height: Math.max(1, y1 - y0) }, style: { fill: frontFill, ...edge }, emphasis: { style: glow(t, color, 1.8) } },
+          { type: 'polygon', shape: { points: [[x + w, y0], [x + w + d, y0 - d], [x + w + d, y1 - d], [x + w, y1]] }, style: { fill: side } },
+          { type: 'polygon', shape: { points: [[x, y0], [x + d, y0 - d], [x + w + d, y0 - d], [x + w, y0]] }, style: { fill: top } },
+        );
+        origin = [x, p0[1]];
+        labelAt = { x: x + w / 2 + d / 2, y: y0 - d - 4, align: 'center', verticalAlign: 'bottom' };
+      }
+      if (b.label.show) {
+        children.push({
+          type: 'text', silent: true,
+          style: { ...labelAt, text: b.label.formatter({ value: v }), fill: t.tokens.textSecondary, fontSize: 11, fontFamily: t.fontFamily },
+        });
+      }
+      return {
+        type: 'group',
+        originX: origin[0], originY: origin[1],
+        children,
+        // Sequential entrance: each cuboid grows out of its baseline.
+        ...(ctx.motion.enabled
+          ? { enterFrom: horizontal ? { scaleX: 0 } : { scaleY: 0 }, enterAnimation: { duration: ctx.motion.entranceMs, delay: delayOf(params.dataIndex) } }
+          : {}),
+      };
+    },
+  };
+}
+
 function labelForBars(ctx: Ctx, horizontal: boolean, field: FieldDef | undefined, percent: boolean): Opt {
   const mode = ctx.definition.options?.labels ?? 'auto';
   // Selective labels: only when every bar has room for one (never a number on every point of a dense chart).
@@ -461,6 +659,8 @@ function labelForBars(ctx: Ctx, horizontal: boolean, field: FieldDef | undefined
   const show = mode === true || (mode === 'auto' && ctx.definition.type !== 'stacked-bar' && ctx.rows.length <= limit && !ctx.definition.encoding?.color);
   return {
     show,
+    // Labels count along with the bar instead of jumping to the new number.
+    valueAnimation: ctx.motion.enabled,
     position: horizontal ? 'right' : 'top',
     distance: 6,
     color: ctx.theme.tokens.textSecondary,
@@ -503,8 +703,10 @@ function buildScatter(ctx: Ctx): BuildResult {
     return 8 + Math.sqrt((v - sizeExt[0]) / span) * 22; // area-proportional, 8–30px
   };
   const total = rows.length;
-  const series = entries.map(([name, rs]) => {
-    const color = t.palette[slotFor(ctx.slots, name) % t.palette.length]!;
+  const pointColors = entries.map(([name]) => t.palette[slotFor(ctx.slots, name) % t.palette.length]!);
+  const deep = t.effects.depth && total <= 5000;
+  const series = entries.map(([name, rs], gi) => {
+    const color = pointColors[gi]!;
     return {
       type: 'scatter',
       id: `s:${name}`,
@@ -512,8 +714,10 @@ function buildScatter(ctx: Ctx): BuildResult {
       data: rs.map((r) => [r[e.x!], r[e.y as string], e.size ? r[e.size] : null]),
       symbolSize: (v: unknown[]) => sizeOf(v[2]),
       large: total > 5000,
-      itemStyle: { color: alpha(color, 0.82), borderColor: t.tokens.bgSurface, borderWidth: 1 },
-      emphasis: { focus: 'series', scale: 1.3, itemStyle: { color, borderColor: t.tokens.textPrimary, borderWidth: 1.5 } },
+      // 3D style: lit spheres casting a shadow.
+      itemStyle: { color: deep ? sphere(color, 0.92) : alpha(color, 0.82), borderColor: t.tokens.bgSurface, borderWidth: deep ? 0 : 1, ...(deep ? depthShadow(t, 0.6) : {}) },
+      animationDelay: stagger(ctx.motion, rs.length),
+      emphasis: { focus: 'series', scale: 1.3, itemStyle: { color, borderColor: t.tokens.textPrimary, borderWidth: 1.5, ...(total > 5000 ? {} : glow(t, color, 1.8)) } },
       blur: { itemStyle: { opacity: 0.15 } },
       universalTransition: { enabled: true },
     };
@@ -534,7 +738,7 @@ function buildScatter(ctx: Ctx): BuildResult {
         const r = entries[p.seriesIndex]?.[1][p.dataIndex];
         const head = e.label && r ? String(r[e.label] ?? '') : p.seriesName;
         const lines = [
-          tooltipRow(p.color, fieldLabel(xf, e.x), formatValue(p.value[0], xf, { locale })),
+          tooltipRow(pointColors[p.seriesIndex] ?? p.color, fieldLabel(xf, e.x), formatValue(p.value[0], xf, { locale })),
           tooltipRow('transparent', fieldLabel(yf, String(e.y)), formatValue(p.value[1], yf, { locale })),
         ];
         if (sf) lines.push(tooltipRow('transparent', fieldLabel(sf), formatValue(p.value[2], sf, { locale })));
@@ -592,6 +796,9 @@ function buildPie(ctx: Ctx): BuildResult {
       selectedMode: selection ? 'single' : false,
       selectedOffset: 6,
       itemStyle: { borderColor: t.tokens.bgSurface, borderWidth: 2, borderRadius: donut ? 4 : 2 },
+      // Slices sweep in one after another (expansion), largest first.
+      animationType: 'expansion',
+      animationDelay: stagger(ctx.motion, items.length),
       label: {
         show: labelsMode !== false,
         color: t.tokens.textSecondary,
@@ -603,33 +810,62 @@ function buildPie(ctx: Ctx): BuildResult {
       labelLine: { show: labelsMode !== false, lineStyle: { color: t.tokens.axisLine }, length: 8, length2: 8 },
       emphasis: { scale: true, scaleSize: 6, focus: 'self', label: { color: t.tokens.textPrimary } },
       blur: { itemStyle: { opacity: 0.35 } },
-      data: items.map((i) => ({
+      data: items.map((i) => {
+        const color = t.palette[slotFor(ctx.slots, i.name) % t.palette.length]!;
+        return {
         name: i.name,
         value: i.value,
-        itemStyle: { color: t.palette[slotFor(ctx.slots, i.name) % t.palette.length] },
+        itemStyle: { color },
+        // Hover: the slice lifts out and glows in its own colour.
+        emphasis: { itemStyle: glow(t, color, 2) },
         // Tiny slices: no label and no dangling leader line.
         ...(labelsMode === 'auto' && total > 0 && i.value / total < 0.05 ? { label: { show: false }, labelLine: { show: false } } : {}),
-      })),
+        };
+      }),
       universalTransition: { enabled: true },
     },
   ];
   if (donut && def.options?.showTotal !== false) {
-    // Centre label as a silent zero-radius pie: always centred on the donut.
+    // Centre label as a silent zero-radius pie: always centred on the donut. Its single
+    // datum carries the total so `valueAnimation` counts the number up/over on change.
+    const centerLabel = (def.options?.centerLabel ?? '합계').replace(/[{}|]/g, '');
     series.push({
       type: 'pie', id: '__center', name: '__center', radius: ['0%', '0%'], center, silent: true, tooltip: { show: false },
       label: {
         show: true, position: 'center',
-        formatter: `{v|${formatValue(total, vf, { locale, withUnit: false }).replace(/[{}|]/g, '')}}\n{l|${(def.options?.centerLabel ?? '합계').replace(/[{}|]/g, '')}}`,
+        valueAnimation: ctx.motion.enabled,
+        formatter: (p: Opt) =>
+          `{v|${formatValue(typeof p.value === 'number' ? p.value : total, vf, { locale, withUnit: false }).replace(/[{}|]/g, '')}}\n{l|${centerLabel}}`,
         rich: {
           v: { color: t.tokens.textPrimary, fontSize: 24, fontWeight: 700, lineHeight: 30, fontFamily: t.fontFamily },
           l: { color: t.tokens.textMuted, fontSize: 12, lineHeight: 18, fontFamily: t.fontFamily },
         },
       },
       labelLine: { show: false },
-      data: [{ value: 1, name: '', itemStyle: { color: 'transparent' } }],
-      animation: false,
+      data: [{ value: total, name: '', itemStyle: { color: 'transparent' } }],
+      animationDuration: ctx.motion.entranceMs * 2,
+      animationDelay: 0,
       emphasis: { disabled: true },
     });
+  }
+  if (t.effects.depth) {
+    // 3D style: a thick disk. Darkened copies of the pie are stacked a little lower to
+    // form the side wall; the real (interactive) pie sits on top. Layers share slice
+    // names, so legend toggles hide the wall together with its slice.
+    const LAYERS = 7;
+    const cy = parseFloat(center[1]);
+    const main = series[0]!;
+    main.z = 3;
+    for (let k = LAYERS; k >= 1; k--) {
+      series.push({
+        type: 'pie', id: `fx:depth:${k}`, name: '__depth', z: 2, silent: true, tooltip: { show: false },
+        radius: main.radius, center: [center[0], `${cy + k * 0.55}%`], padAngle: main.padAngle, minAngle: main.minAngle,
+        animationType: 'expansion', animationDelay: main.animationDelay,
+        label: { show: false }, labelLine: { show: false }, emphasis: { disabled: true },
+        itemStyle: { borderColor: t.tokens.bgSurface, borderWidth: k === LAYERS ? 2 : 0, borderRadius: main.itemStyle.borderRadius, ...(k === LAYERS ? depthShadow(t, 1.4) : {}) },
+        data: items.map((i) => ({ name: i.name, value: i.value, itemStyle: { color: shade(t.palette[slotFor(ctx.slots, i.name) % t.palette.length]!, -0.45 - k * 0.02) } })),
+      });
+    }
   }
   const option: Opt = {
     ...baseOption(ctx),
@@ -672,22 +908,38 @@ function buildGauge(ctx: Ctx): BuildResult {
   const statusColor = thresholds.length ? t.status[level] : t.tokens.accentBlue;
 
   const geometry = { min, max, startAngle: 215, endAngle: -35, center: ['50%', '58%'] };
+  const { motion } = ctx;
+  // Alerts glow harder so a breached gauge stands out on a dense dashboard.
+  const glowStrength = level === 'critical' ? 2.4 : level === 'warning' ? 1.7 : 1.2;
+  // Natural rotation: a slow cubicOut sweep on entrance, an ease-in-out swing on change.
+  // Arc, tip marker and the counting readout share these timings so they move as one.
+  const sweep = {
+    animationDuration: motion.sweepMs,
+    animationEasing: 'cubicOut',
+    animationDurationUpdate: motion.sweepUpdateMs,
+    animationEasingUpdate: 'cubicInOut',
+    animationDelay: 0,
+  };
   const option: Opt = {
     ...baseOption(ctx),
     series: [
       {
-        // Main: track + value progress + centre readout.
-        type: 'gauge', id: 'gauge', ...geometry, radius: '82%', splitNumber: 5,
+        // Main: track + value progress + tip marker + centre readout.
+        type: 'gauge', id: 'gauge', ...geometry, ...sweep, radius: '82%', splitNumber: 5,
         axisLine: { roundCap: true, lineStyle: { width: 12, color: [[1, t.tokens.bgHover]] } },
-        progress: { show: true, width: 12, roundCap: true, itemStyle: { color: statusColor } },
-        pointer: { show: false },
+        progress: { show: true, width: 12, roundCap: true, itemStyle: { color: statusColor, ...glow(t, statusColor, glowStrength) } },
+        // Tip marker riding the arc end (offset out from the centre so it never covers the readout).
+        pointer: {
+          show: value !== null, icon: 'roundRect', width: 4, length: '20%', offsetCenter: [0, '-84%'],
+          itemStyle: { color: t.tokens.textPrimary, ...glow(t, statusColor, glowStrength + 0.4) },
+        },
         anchor: { show: false },
         axisTick: { show: false },
         splitLine: { show: false },
         axisLabel: { color: t.tokens.textMuted, fontSize: 10, distance: 18, formatter: (v: number) => formatAxisValue(v, vf, locale) },
         title: { show: !!label, offsetCenter: [0, '42%'], color: t.tokens.textSecondary, fontSize: 12 },
         detail: {
-          valueAnimation: ctx.motion.enabled,
+          valueAnimation: motion.enabled,
           offsetCenter: [0, '4%'],
           formatter: (v: number) =>
             `{v|${safe(formatValue(value === null ? null : v, vf, { locale }))}}` +
@@ -702,7 +954,7 @@ function buildGauge(ctx: Ctx): BuildResult {
       ...(thresholds.length
         ? [{
             // Outer thin band: threshold zones, so the scale context is visible at a glance.
-            type: 'gauge', id: 'gauge-zones', ...geometry, radius: '92%', silent: true,
+            type: 'gauge', id: 'gauge-zones', ...geometry, ...sweep, radius: '92%', silent: true,
             axisLine: { roundCap: false, lineStyle: { width: 3, color: stops } },
             progress: { show: false }, pointer: { show: false }, anchor: { show: false }, axisTick: { show: false },
             splitLine: { show: false }, axisLabel: { show: false }, detail: { show: false }, title: { show: false }, data: [],
@@ -759,9 +1011,11 @@ function buildHeatmap(ctx: Ctx): BuildResult {
       type: 'heatmap', id: 'heatmap', name: def.title ?? fieldLabel(vf), data,
       itemStyle: { borderColor: t.tokens.bgSurface, borderWidth: 2, borderRadius: 3 },
       label: { show: labels, fontSize: 10, formatter: (p: Opt) => formatAxisValue(p.value[2], vf, locale) },
-      emphasis: { itemStyle: { borderColor: t.tokens.textPrimary, borderWidth: 1.5 } },
+      emphasis: { itemStyle: { borderColor: t.tokens.textPrimary, borderWidth: 1.5, ...glow(t, t.tokens.accentCyan, 1.6) } },
       selectedMode: def.interactions?.includes('selection') ? 'single' : false,
       progressive: 2000,
+      // Cells fade in row by row.
+      animationDelay: stagger(ctx.motion, data.length),
     }],
     tooltip: {
       ...tooltipBase(t, 'item'),
@@ -886,7 +1140,13 @@ function buildRadar(ctx: Ctx): BuildResult {
       splitLine: { lineStyle: { color: t.tokens.gridLine } },
       splitArea: { areaStyle: { color: [t.tokens.bgHover] } },
     },
-    series: [{ type: 'radar', data, areaStyle: { opacity: 0.3 }, lineStyle: { width: 2 } }],
+    series: [{
+      type: 'radar',
+      data: data.map((d) => ({ ...d, lineStyle: { width: 2, ...glow(t, d.itemStyle.color!) }, emphasis: { lineStyle: { width: 2.5, ...glow(t, d.itemStyle.color!, 2) } } })),
+      areaStyle: { opacity: 0.3 },
+      emphasis: { areaStyle: { opacity: 0.5 } },
+      animationDelay: stagger(ctx.motion, data.length),
+    }],
     tooltip: { ...tooltipBase(t, 'item'), show: def.interactions?.includes('tooltip') !== false },
     legend: groups.length > 1 && def.interactions?.includes('legend-toggle') ? legendOption(ctx, groups, 'top') : undefined,
   };
@@ -983,6 +1243,7 @@ function buildFunnel(ctx: Ctx): BuildResult {
       value,
       name: String(cat),
       itemStyle: { color: t.palette[i % t.palette.length] },
+      emphasis: { itemStyle: glow(t, t.palette[i % t.palette.length]!, 2) },
     };
   });
 
@@ -996,6 +1257,8 @@ function buildFunnel(ctx: Ctx): BuildResult {
       itemStyle: { borderColor: t.tokens.bgSurface, borderWidth: 2 },
       label: { show: true, color: t.tokens.textPrimary, fontSize: 12 },
       emphasis: { focus: 'series' },
+      // Stages drop in top → bottom.
+      animationDelay: stagger(ctx.motion, data.length),
     }],
     tooltip: tooltipBase(t, 'item'),
     legend: legendOption(ctx, data.map(d => d.name), 'right'),
@@ -1037,7 +1300,9 @@ function buildSankey(ctx: Ctx): BuildResult {
       nodes,
       links,
       itemStyle: { borderColor: t.tokens.gridLine, borderWidth: 1 },
-      lineStyle: { opacity: 0.3 },
+      // Flows blend source → target colour; hovering a node lights its flows.
+      lineStyle: { color: t.effects.gradient ? 'gradient' : 'source', opacity: 0.32, curveness: 0.5 },
+      emphasis: { focus: 'adjacency', lineStyle: { opacity: 0.6 } },
       label: { show: true, color: t.tokens.textPrimary, fontSize: 11 },
     }],
     tooltip: tooltipBase(t, 'item'),
@@ -1093,9 +1358,12 @@ function buildBubble(ctx: Ctx): BuildResult {
     type: 'scatter', name: String(categories[i]), id: `bubble:${i}`,
     data: group.map(r => ({ name: String(r[e.label!] ?? ''), value: [xy ? r[e.x!] : categories[i], xy ? r[yField!] : r[e.value!], r[e.value!]] })),
     symbolSize: (value: number[]) => maxSize > minSize ? 14 + Math.sqrt((Math.max(minSize, value[2]!) - minSize) / (maxSize - minSize)) * 48 : 34,
-    itemStyle: { color: t.palette[i % t.palette.length], opacity: 0.65, borderColor: t.palette[i % t.palette.length], borderWidth: 1 },
+    itemStyle: t.effects.depth
+      ? { color: sphere(t.palette[i % t.palette.length]!, 0.85), ...depthShadow(t, 0.7) }
+      : { color: t.palette[i % t.palette.length], opacity: 0.65, borderColor: t.palette[i % t.palette.length], borderWidth: 1 },
     label: { show: def.options?.labels === true, position: 'inside', color: t.tokens.textPrimary, fontSize: 10, formatter: (p: Opt) => String(group[p.dataIndex]?.[e.label!] ?? '') },
-    emphasis: { scale: 1.15 },
+    emphasis: { scale: 1.15, itemStyle: { opacity: 0.9, ...glow(t, t.palette[i % t.palette.length]!, 2) } },
+    animationDelay: stagger(ctx.motion, group.length, i),
   }));
   return {
     option: {
@@ -1109,9 +1377,9 @@ function buildBubble(ctx: Ctx): BuildResult {
           const row = grouped[p.seriesIndex]?.[p.dataIndex];
           if (!row) return '';
           return tooltipHeader(String(row[e.label!])) +
-            (xy ? tooltipRow(p.color, fieldLabel(fm.get(e.x!), e.x!), formatValue(row[e.x!], fm.get(e.x!), { locale })) +
-              tooltipRow(p.color, fieldLabel(fm.get(yField!), yField!), formatValue(row[yField!], fm.get(yField!), { locale })) : '') +
-            tooltipRow(p.color, fieldLabel(fm.get(e.value!), e.value!), formatValue(row[e.value!], fm.get(e.value!), { locale }));
+            (xy ? tooltipRow(t.palette[p.seriesIndex % t.palette.length]!, fieldLabel(fm.get(e.x!), e.x!), formatValue(row[e.x!], fm.get(e.x!), { locale })) +
+              tooltipRow(t.palette[p.seriesIndex % t.palette.length]!, fieldLabel(fm.get(yField!), yField!), formatValue(row[yField!], fm.get(yField!), { locale })) : '') +
+            tooltipRow(t.palette[p.seriesIndex % t.palette.length]!, fieldLabel(fm.get(e.value!), e.value!), formatValue(row[e.value!], fm.get(e.value!), { locale }));
         },
       },
     },
@@ -1139,8 +1407,19 @@ function buildGaugeGroup(ctx: Ctx): BuildResult {
       startAngle: 90, clockwise: true, avoidLabelOverlap: false,
       label: { show: false }, labelLine: { show: false },
       emphasis: { scale: false },
+      // Rings sweep clockwise one after another, outer first, with the gauge's physical easing.
+      animationType: 'expansion',
+      animationDuration: ctx.motion.sweepMs,
+      animationEasing: 'cubicOut',
+      animationDurationUpdate: ctx.motion.sweepUpdateMs,
+      animationEasingUpdate: 'cubicInOut',
+      animationDelay: ctx.motion.enabled ? i * 120 : 0,
       data: [
-        { name, value: progress, itemStyle: { color: t.palette[i % t.palette.length], borderRadius: step >= 4 ? 4 : 0 } },
+        {
+          name, value: progress,
+          itemStyle: { color: t.palette[i % t.palette.length], borderRadius: step >= 4 ? 4 : 0, ...glow(t, t.palette[i % t.palette.length]!) },
+          emphasis: { itemStyle: glow(t, t.palette[i % t.palette.length]!, 2) },
+        },
         { name: '', value: span - progress, itemStyle: { color: t.tokens.bgHover }, tooltip: { show: false } },
       ],
     };
@@ -1221,6 +1500,8 @@ function buildWordCloud(ctx: Ctx): BuildResult {
     : eligible;
   const layoutInput = words.map(r => ({ text: String(r[e.category!]), weight: r[e.value!] as number }));
   let cached = { width: -1, height: -1, positions: [] as ReturnType<typeof layoutWords> };
+  const delayFn = stagger(ctx.motion, words.length);
+  const wordDelay = (i: number) => (typeof delayFn === 'function' ? delayFn(i) : delayFn);
   const series = [{
     type: 'custom', coordinateSystem: 'none',
     data: words.map(r => [r[e.category!], r[e.value!]]),
@@ -1229,7 +1510,16 @@ function buildWordCloud(ctx: Ctx): BuildResult {
       if (width !== cached.width || height !== cached.height) cached = { width, height, positions: layoutWords(layoutInput, width, height) };
       const pos = cached.positions[params.dataIndex];
       if (!pos) return null;
-      return { type: 'text', x: pos.x, y: pos.y, rotation: pos.rotate ? Math.PI / 2 : 0, style: { x: 0, y: 0, text: String(words[params.dataIndex]?.[e.category!] ?? ''), fontSize: pos.fontSize, fontFamily: t.fontFamily, fill: t.palette[params.dataIndex % t.palette.length], align: 'center', verticalAlign: 'middle' } };
+      const fill = t.palette[params.dataIndex % t.palette.length]!;
+      return {
+        type: 'text', x: pos.x, y: pos.y, rotation: pos.rotate ? Math.PI / 2 : 0,
+        style: { x: 0, y: 0, text: String(words[params.dataIndex]?.[e.category!] ?? ''), fontSize: pos.fontSize, fontFamily: t.fontFamily, fill, align: 'center', verticalAlign: 'middle', ...(t.effects.depth ? { textShadowColor: 'rgba(0, 0, 0, 0.6)', textShadowBlur: 4, textShadowOffsetX: 1, textShadowOffsetY: 3 } : {}) },
+        // Words pop in one after another.
+        ...(ctx.motion.enabled
+          ? { enterFrom: { style: { opacity: 0 }, scaleX: 0.6, scaleY: 0.6 }, enterAnimation: { duration: ctx.motion.entranceMs, delay: wordDelay(params.dataIndex) } }
+          : {}),
+        emphasis: { style: { fill, ...(t.effects.glow ? { shadowBlur: 12, shadowColor: alpha(fill, 0.7) } : {}) } },
+      };
     },
   }];
   return {
@@ -1268,9 +1558,44 @@ export function buildOption(ctx: RenderContext & { slots?: SlotMap }): BuildResu
     default:
       throw new Error(`ECharts adapter cannot render '${ctx.definition.type}'`);
   }
+  if (c.theme.effects.depth) applyDepth(result.option, c.theme);
   const extra = ctx.definition.engineOptions?.echarts;
   if (extra && Object.keys(extra).length) result.option = mergeEngineOptions(result.option, extra);
   return result;
+}
+
+/**
+ * 3D style for chart types without a dedicated 3D form: marks are raised off the
+ * surface with a down-right drop shadow (cells, tiles, nodes, rings, boxes).
+ * Bars, pies, lines and points have their own 3D forms in their builders.
+ */
+function applyDepth(option: Opt, t: ResolvedTheme): void {
+  const raise = (style: Opt | undefined, strength: number) => ({ ...(style ?? {}), ...depthShadow(t, strength) });
+  for (const s of (option.series as Opt[] | undefined) ?? []) {
+    if (String(s.id ?? '').startsWith('fx:')) continue;
+    switch (s.type) {
+      case 'heatmap': case 'sankey':
+        s.itemStyle = raise(s.itemStyle, 0.7);
+        break;
+      case 'funnel': case 'candlestick': case 'boxplot':
+        s.itemStyle = raise(s.itemStyle, 1.1);
+        break;
+      case 'treemap': case 'sunburst':
+        s.itemStyle = raise(s.itemStyle, 0.5);
+        break;
+      case 'radar':
+        s.areaStyle = raise(s.areaStyle, 0.8);
+        break;
+      case 'gauge':
+        if (s.progress?.show) s.progress.itemStyle = raise(s.progress.itemStyle, 0.8);
+        if (s.pointer?.show) s.pointer.itemStyle = raise(s.pointer.itemStyle, 0.6);
+        break;
+      case 'pie':
+        // Gauge-group rings (the plain pie/donut builds its own thick disk).
+        if (String(s.id ?? '').startsWith('gauge:') && s.data?.[0]) s.data[0].itemStyle = raise(s.data[0].itemStyle, 0.7);
+        break;
+    }
+  }
 }
 
 /** Escape-hatch merge: plain objects deep-merge; `series` merges by index. Input is pre-sanitised. */

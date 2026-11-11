@@ -5,7 +5,7 @@
 `@codvil/chart`는 Vue 3와 Apache ECharts를 사용하는 차트 라이브러리입니다. 차트 정의로 데이터, 차트 종류와 옵션을 지정합니다. COD-PRO Chart Contents 데이터 형식도 지원합니다.
 
 - 요구 사항: Node.js와 npm, Vue 3.5 이상, ECharts 6.x
-- 이 프로젝트는 `private: true`, `UNLICENSED`이며 npm에 공개된 패키지가 아닙니다.
+- 패키지 배포에는 사내 npm 레지스트리와 인증 설정이 필요합니다.
 - 라이브러리와 데모 대시보드의 기본 렌더러는 Canvas입니다. 데모의 SVG 렌더러 스위치로 SVG를 선택할 수 있습니다.
 - 접근 권한이 있는 사용자만 비공개 GitHub 저장소에 접근할 수 있습니다.
 
@@ -104,6 +104,11 @@ function onPointClick(event: ChartEventPayload) {
 - `data.rows`: 필드 이름을 키로 사용하는 객체 배열.
 - `encoding`: 차트의 축·범주·측정값에 사용할 필드 이름.
 - `options`, `interactions`, `theme`, `animation`: 선택 설정.
+  - `theme.effects`: CODVIL 효과 `{ gradient?: boolean; glow?: boolean; depth?: boolean }`. `gradient`·`glow`는 기본 켜짐이며 인쇄나 저전력 화면에서는 `false`로 끕니다.
+  - `theme.effects.depth: true`: 모든 차트를 입체(3D) 스타일로 그립니다(기본 꺼짐). 막대는 윗면·옆면이 있는 직육면체, 파이·도넛은 두께가 있는 원판, 산점도·버블은 빛을 받은 구, 라인·히트맵·트리맵 등은 그림자로 떠 있는 형태가 됩니다. 2D 렌더러를 그대로 쓰므로 툴팁·클릭·범례·내보내기가 모두 동작합니다.
+  - 3D 막대에서 누적 막대의 범례로 시리즈를 숨기면 그 자리가 비어 보입니다(2D 모드는 다시 쌓임).
+
+진입 애니메이션 다시 재생: 컴포넌트 ref의 `replayAnimation()`을 호출하면 데이터를 다시 불러오지 않고 현재 데이터로 진입 애니메이션을 처음부터 재생합니다. 애니메이션이 꺼져 있거나 `prefers-reduced-motion`이면 아무 동작도 하지 않습니다.
 
 `number`는 숫자 문자열도 허용합니다. 변환이 불가능한 값은 빈 값으로 처리되고 경고가 발생합니다. 필수 인코딩이 없거나 참조 필드의 타입이 잘못되면 오류 상태가 표시됩니다. `data` prop으로 행 배열을 전달하면 정의의 `data.rows`보다 우선합니다. 배열 내용을 직접 변경하지 말고 새 배열로 교체하세요.
 

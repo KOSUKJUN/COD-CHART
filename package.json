@@ -1,6 +1,6 @@
 {
   "name": "@codvil/chart",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "CODVIL Chart Library — Vue 3 + Apache ECharts chart components",
   "main": "./dist/codvil-chart.js",
   "scripts": {
@@ -25,7 +25,7 @@
     "vue": "^3.5.45",
     "vue-tsc": "^3.3.14"
   },
-  "private": true,
+  "private": false,
   "sideEffects": [
     "**/*.css"
   ],

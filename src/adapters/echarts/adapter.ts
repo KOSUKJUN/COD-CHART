@@ -58,6 +58,13 @@ export class EChartsAdapter implements RendererAdapter {
     });
   }
 
+  replay(): void {
+    if (!this.chart || !this.last) return;
+    // clear() drops every rendered mark, so the next setOption plays the full entrance again.
+    this.chart.clear();
+    this.chart.setOption(this.last.option, { notMerge: true });
+  }
+
   onEvent(listener: (e: AdapterEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

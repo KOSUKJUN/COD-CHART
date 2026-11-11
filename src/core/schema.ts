@@ -275,6 +275,13 @@ export function validateChartDefinition(input: unknown): ValidationResult {
     if (t.palette !== undefined && (!Array.isArray(t.palette) || !t.palette.every(isSafeColor) || t.palette.length > 12)) {
       err('theme.palette', 'color', 'palette는 12개 이하의 색상 리터럴 배열이어야 합니다.');
     }
+    if (t.effects !== undefined) {
+      if (!isPlainObject(t.effects)) err('theme.effects', 'type', 'theme.effects는 { gradient?, glow?, depth? } 객체여야 합니다.');
+      else for (const [k, v] of Object.entries(t.effects)) {
+        if (k !== 'gradient' && k !== 'glow' && k !== 'depth') err(`theme.effects.${k}`, 'unknown-effect', `알 수 없는 효과입니다: ${k}`);
+        else if (typeof v !== 'boolean') err(`theme.effects.${k}`, 'type', `${k}는 불리언이어야 합니다.`);
+      }
+    }
   }
 
   // events — declarative allow-listed actions

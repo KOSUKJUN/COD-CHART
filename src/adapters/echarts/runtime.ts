@@ -3,7 +3,7 @@
  * bundled. Add modules here when a new catalog type needs them.
  */
 import * as echarts from 'echarts/core';
-import { BarChart, BoxplotChart, CandlestickChart, CustomChart, FunnelChart, GaugeChart, HeatmapChart, LineChart, PieChart, RadarChart, SankeyChart, ScatterChart, SunburstChart, TreemapChart } from 'echarts/charts';
+import { BarChart, BoxplotChart, CandlestickChart, CustomChart, EffectScatterChart, FunnelChart, GaugeChart, HeatmapChart, LineChart, PieChart, RadarChart, SankeyChart, ScatterChart, SunburstChart, TreemapChart } from 'echarts/charts';
 import {
   AriaComponent, DataZoomInsideComponent, DataZoomSliderComponent, GridComponent, LegendScrollComponent,
   MarkLineComponent, RadarComponent, TitleComponent, TooltipComponent, VisualMapContinuousComponent,
@@ -15,7 +15,7 @@ import { CanvasRenderer, SVGRenderer } from 'echarts/renderers';
 import * as langKOModule from 'echarts/i18n/langKO-obj.js';
 
 echarts.use([
-  BarChart, BoxplotChart, CandlestickChart, CustomChart, FunnelChart, GaugeChart, HeatmapChart, LineChart, PieChart, RadarChart, SankeyChart, ScatterChart, SunburstChart, TreemapChart,
+  BarChart, BoxplotChart, CandlestickChart, CustomChart, EffectScatterChart, FunnelChart, GaugeChart, HeatmapChart, LineChart, PieChart, RadarChart, SankeyChart, ScatterChart, SunburstChart, TreemapChart,
   AriaComponent, DataZoomInsideComponent, DataZoomSliderComponent, GridComponent, LegendScrollComponent,
   MarkLineComponent, RadarComponent, TitleComponent, TooltipComponent, VisualMapContinuousComponent,
   LabelLayout, UniversalTransition, CanvasRenderer, SVGRenderer,

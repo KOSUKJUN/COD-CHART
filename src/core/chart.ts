@@ -38,6 +38,8 @@ export interface ChartHandle {
   appendData(rows: Row[], windowSize?: number): void;
   refresh(): void;
   resize(width?: number, height?: number): void;
+  /** Replay the entrance animation with the current data (respects motion settings). */
+  replayAnimation(): void;
   on(event: ChartEventName | '*', handler: ChartEventHandler): () => void;
   /** Called after every committed render (data or definition). Used by DOM widgets. */
   onRender(listener: () => void): () => void;
@@ -305,6 +307,9 @@ export function createChart(
     refresh: () => !destroyed && controller.refresh(),
     resize(w, h) {
       if (!destroyed && mounted) adapter?.resize(w, h);
+    },
+    replayAnimation() {
+      if (!destroyed && mounted) adapter?.replay?.();
     },
     on(event, handler) {
       if (destroyed) return () => {};

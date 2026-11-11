@@ -105,6 +105,9 @@ const emptyMessage = computed(() => raw.value.options?.emptyMessage ?? '표시�
 const canRetry = computed(() => !!raw.value.dataSource && raw.value.dataSource.kind !== 'static');
 
 const showTable = ref(false);
+/** Bumped by replayAnimation() to remount DOM widgets so their CSS entrance replays. */
+const replayKey = ref(0);
+const motionOn = computed(() => raw.value.animation?.enabled !== false && raw.value.animation?.preset !== 'none');
 const a11yTable = computed(() => (def.value ? buildAccessibleTable(def.value, rows.value) : null));
 const summary = computed(() => (def.value ? buildSummary(def.value, rows.value, locale.value) : ''));
 
@@ -141,6 +144,10 @@ defineExpose({
   /** Stable CODVIL API — the engine instance is never exposed. */
   refresh: () => handle.value?.refresh(),
   resize: (w?: number, h?: number) => handle.value?.resize(w, h),
+  replayAnimation: () => {
+    replayKey.value++;
+    handle.value?.replayAnimation();
+  },
   setData: (r: Row[]) => handle.value?.setData(r),
   appendData: (r: Row[], windowSize?: number) => handle.value?.appendData(r, windowSize),
   exportImage: (o?: Parameters<NonNullable<typeof handle.value>['exportImage']>[0]) => handle.value?.exportImage(o) ?? null,
@@ -152,7 +159,7 @@ defineExpose({
 <template>
   <section
     class="cv-root cv-chart"
-    :class="[`cv-chart--${raw.type}`, { 'cv-chart--framed': framed, 'is-table': showTable }]"
+    :class="[`cv-chart--${raw.type}`, { 'cv-chart--framed': framed, 'cv-chart--depth': theme.effects.depth, 'cv-chart--motion': motionOn, 'is-table': showTable }]"
     :style="cssVars"
     role="figure"
     :aria-labelledby="raw.title ? `${uid}-title` : undefined"
@@ -197,6 +204,7 @@ defineExpose({
         <component
           :is="widget"
           v-else-if="widget && def && rows.length > 0"
+          :key="replayKey"
           :definition="def"
           :rows="rows"
           :locale="locale"

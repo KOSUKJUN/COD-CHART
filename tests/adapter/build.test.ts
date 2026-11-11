@@ -21,6 +21,8 @@ function build(raw: unknown, rowsOverride?: Row[], slots?: SlotMap) {
 }
 
 const series = (o: Opt) => o.series as Opt[];
+/** Data series only — without the CODVIL `fx:` emphasis overlays. */
+const dataSeries = (o: Opt) => series(o).filter((s) => !String(s.id ?? '').startsWith('fx:'));
 
 describe('buildOption — every ECharts MVP type', () => {
   it.each(ECHARTS_TYPES)('%s builds a themed, accessible option', (type) => {
@@ -43,7 +45,7 @@ describe('buildOption — every ECharts MVP type', () => {
 describe('cartesian', () => {
   it('line: one series per measure, 2px lines, time axis, threshold markLine, zoom', () => {
     const { option } = build(definitions.line);
-    expect(series(option).map((s) => s.name)).toEqual(['p50', 'p95']);
+    expect(dataSeries(option).map((s) => s.name)).toEqual(['p50', 'p95']);
     expect(series(option)[0]!.lineStyle.width).toBe(2);
     expect(series(option)[0]!.sampling).toBe('lttb');
     expect(option.xAxis.type).toBe('time');
@@ -92,7 +94,8 @@ describe('cartesian', () => {
     const slots: SlotMap = new Map();
     const raw = definitions['stacked-bar'];
     const all = build(raw, undefined, slots);
-    const colorOf = (o: Opt, name: string) => series(o).find((s) => s.name === name)!.itemStyle.color;
+    // Bars carry a value-end gradient; its first stop is the entity's palette colour.
+    const colorOf = (o: Opt, name: string) => series(o).find((s) => s.name === name)!.itemStyle.color.colorStops[0].color;
     const partnerBefore = colorOf(all.option, '파트너');
     const filtered = build(raw, (raw.data.rows as Row[]).filter((r) => r.channel !== '온라인'), slots);
     expect(colorOf(filtered.option, '파트너')).toBe(partnerBefore);
@@ -134,6 +137,17 @@ describe('tooltips escape untrusted text', () => {
 });
 
 describe('part-to-whole', () => {
+  it('pie is a single 2D series; donut adds a centre series', () => {
+    const pie = build(definitions.pie);
+    expect(series(pie.option)).toHaveLength(1);
+    expect(series(pie.option)[0]!.type).toBe('pie');
+    expect(pie.lookup(0, 0)?.name).toBe(series(pie.option)[0]!.data[0].name);
+
+    const donut = build(definitions.donut);
+    expect(series(donut.option)).toHaveLength(2);
+    expect(series(donut.option)[1]!.id).toBe('__center');
+  });
+
   it('radar uses the required value channel to build metric values', () => {
     const { option, definition } = build(definitions.radar);
     expect(definition.encoding?.value).toBe('score');
@@ -182,7 +196,8 @@ describe('part-to-whole', () => {
     const { option } = build(definitions.donut);
     const center = series(option)[1]!;
     expect(center.silent).toBe(true);
-    expect(center.label.formatter).toContain('1,002');
+    expect(center.label.valueAnimation).toBe(true); // total counts up / tweens on change
+    expect(center.label.formatter({ value: center.data[0].value })).toContain('1,002');
     expect(option.legend.data).not.toContain('');
   });
 
