@@ -3,7 +3,7 @@ import { buildOption, buildTree, mergeEngineOptions, type Opt, type SlotMap } fr
 import { resolveMotion } from '../../src/core/animation';
 import { normalizeRows } from '../../src/core/data';
 import { assertValidDefinition } from '../../src/core/schema';
-import { PREMIUM_DARK_BLUE_PALETTE, resolveTheme } from '../../src/core/theme';
+import { CYBER_NEON_PALETTE, resolveTheme } from '../../src/core/theme';
 import type { ChartDefinition, ChartType, Row } from '../../src/core/types';
 import { definitions, type DemoChartType } from '../../playground/fixtures';
 import { contentsDefinitions } from '../../playground/contents-fixtures';
@@ -29,7 +29,7 @@ describe('buildOption — every ECharts MVP type', () => {
     const { option } = build(definitions[type]);
     expect(option.backgroundColor).toBe('transparent');
     expect(option.aria).toMatchObject({ enabled: true, label: { description: 'S' } });
-    expect(option.textStyle.color).toBe('#A9B9CC');
+    expect(option.textStyle.color).toBe('#9EC2DC');
     expect(series(option).length).toBeGreaterThan(0);
     expect(option.tooltip.renderMode).toBe('html');
     expect(typeof option.tooltip.formatter).toBe('function');
@@ -71,7 +71,7 @@ describe('cartesian', () => {
     expect(s.every((x) => x.stack === 'total')).toBe(true);
     expect(s[0]!.itemStyle.borderRadius).toEqual([0, 0, 0, 0]);
     expect(s.at(-1)!.itemStyle.borderRadius).toEqual([4, 4, 0, 0]);
-    expect(s[0]!.itemStyle.borderColor).toBe('#0B1728');
+    expect(s[0]!.itemStyle.borderColor).toBe('#07101F');
   });
 
   it('percent stacking normalises each category to 1', () => {
@@ -95,11 +95,11 @@ describe('cartesian', () => {
     const raw = definitions['stacked-bar'];
     const all = build(raw, undefined, slots);
     // Bars carry a value-end gradient; its first stop is the entity's palette colour.
-    const colorOf = (o: Opt, name: string) => series(o).find((s) => s.name === name)!.itemStyle.color.colorStops[0].color;
+    const colorOf = (o: Opt, name: string) => series(o).find((s) => s.name === name)!.itemStyle.color.colorStops[1].color; // [0] is the lit value end
     const partnerBefore = colorOf(all.option, '파트너');
     const filtered = build(raw, (raw.data.rows as Row[]).filter((r) => r.channel !== '온라인'), slots);
     expect(colorOf(filtered.option, '파트너')).toBe(partnerBefore);
-    expect(partnerBefore).toBe(PREMIUM_DARK_BLUE_PALETTE[2]);
+    expect(partnerBefore).toBe(CYBER_NEON_PALETTE[2]);
   });
 
   it('LTTB caps points when maxPoints is set', () => {
@@ -139,12 +139,13 @@ describe('tooltips escape untrusted text', () => {
 describe('part-to-whole', () => {
   it('pie is a single 2D series; donut adds a centre series', () => {
     const pie = build(definitions.pie);
-    expect(series(pie.option)).toHaveLength(1);
+    const data = (o: Opt) => series(o).filter((s) => !String(s.id ?? '').startsWith('fx:'));
+    expect(data(pie.option)).toHaveLength(1);
     expect(series(pie.option)[0]!.type).toBe('pie');
     expect(pie.lookup(0, 0)?.name).toBe(series(pie.option)[0]!.data[0].name);
 
     const donut = build(definitions.donut);
-    expect(series(donut.option)).toHaveLength(2);
+    expect(data(donut.option)).toHaveLength(2);
     expect(series(donut.option)[1]!.id).toBe('__center');
   });
 
@@ -153,6 +154,32 @@ describe('part-to-whole', () => {
     expect(definition.encoding?.value).toBe('score');
     expect(option.radar.indicator.map((indicator: Opt) => indicator.name)).toEqual(['CPU', 'Memory', 'Disk', 'Network']);
     expect(series(option)[0]!.data[0].value).toEqual([75, 85, 65, 90]);
+  });
+
+  it('a plain line has no fill under it (only area charts are filled)', () => {
+    expect(series(build(definitions.line).option).filter((s) => s.type === 'line').every((s) => s.areaStyle === undefined)).toBe(true);
+    expect(series(build(definitions.area).option).find((s) => s.type === 'line')!.areaStyle).toBeDefined();
+  });
+
+  it('bars highlight on hover without a shaded band behind the category; lines keep the crosshair', () => {
+    expect(build(definitions.column).option.tooltip.axisPointer).toEqual({ type: 'none' });
+    expect(build(definitions.line).option.tooltip.axisPointer.type).toBe('line');
+  });
+
+  it('radar is a spider web: polygon grid lines, line series, fill only on hover, legend on the right', () => {
+    const multi = { ...definitions.radar, data: { ...definitions.radar.data, fields: [...definitions.radar.data.fields, { name: 'kind', type: 'string' }], rows: [
+      { metric: 'CPU', score: 70, kind: '예산' }, { metric: 'Memory', score: 80, kind: '예산' },
+      { metric: 'CPU', score: 60, kind: '실제' }, { metric: 'Memory', score: 95, kind: '실제' },
+    ] }, encoding: { ...definitions.radar.encoding, color: 'kind' } };
+    const { option } = build(multi);
+    expect(option.radar).toMatchObject({ shape: 'polygon', splitArea: { show: false } });
+    const s = series(option)[0]!;
+    expect(s.areaStyle.opacity).toBe(0);
+    expect(s.data[0].emphasis.areaStyle.color).toMatch(/^rgba?\(/);
+    expect(option.legend).toMatchObject({ orient: 'vertical', right: 0, data: ['예산', '실제'] });
+    const tip = option.tooltip.formatter({ name: '실제', color: '#fff', value: [60, 95] }) as string;
+    expect(tip).toContain('CPU');
+    expect(tip).toContain('95');
   });
 
   describe('additional chart types', () => {
@@ -211,7 +238,7 @@ describe('gauge', () => {
   it('colours progress by threshold status and shows icon + label', () => {
     const { option } = build(definitions.gauge);
     const main = series(option)[0]!;
-    expect(main.progress.itemStyle.color).toBe('#F6B84A'); // 72 ≥ 70 → warning
+    expect(main.progress.itemStyle.color).toBe('#FFB020'); // 72 ≥ 70 → warning
     expect(main.detail.formatter(72)).toMatch(/Warning/);
     expect(series(option)[1]!.axisLine.lineStyle.color).toHaveLength(3); // ok | warning | critical zones
   });
@@ -234,16 +261,18 @@ describe('gauge', () => {
     });
 
     describe('bubble chart', () => {
-      it('uses values as the vertical coordinate for Contents data, not array index', () => {
+      it('Contents data renders packed bubbles: one series per group, packed in pixel space, size by value', () => {
         const input = contentsDefinitions.find(d => d.id === 'contents-bubble')!;
         const result = build(input);
-        const bubbles = series(result.option);
-        expect(result.option.xAxis.type).toBe('category');
-        expect(result.option.yAxis.type).toBe('value');
-        expect(bubbles[0]!.data[0]).toEqual({ name: 'Today_1', value: ['Today', 51, 51] });
-        expect(bubbles[0]!.data[1]).toEqual({ name: 'Today_2', value: ['Today', 24, 24] });
-        expect(bubbles[0]!.symbolSize([0, 0, 90])).toBeGreaterThan(bubbles[0]!.symbolSize([0, 0, 20]));
+        const groups = series(result.option);
+        expect(result.option.xAxis).toBeUndefined();
+        expect(groups.map((s) => [s.type, s.name])).toEqual([['custom', 'Today'], ['custom', 'Weeks'], ['custom', 'Older']]);
+        expect(groups[0]!.data).toHaveLength(8);
+        const api = { getWidth: () => 430, getHeight: () => 230 };
+        const r = (si: number, di: number) => groups[si]!.renderItem({ dataIndex: di }, api).children[0].shape.r;
+        expect(r(2, 6)).toBeGreaterThan(r(1, 3)); // Older_7 = 99 vs Weeks_4 = 12
         expect(result.lookup(0, 0)?.row).toMatchObject({ label: 'Today_1', value: 51 });
+        expect(result.option.tooltip.formatter({ seriesIndex: 0, dataIndex: 0 })).toContain('51');
       });
 
       describe('word cloud', () => {
@@ -304,10 +333,10 @@ describe('gauge', () => {
 describe('heatmap', () => {
   it('uses the sequential ramp, cell gaps, and dark ink on light cells', () => {
     const { option } = build({ ...definitions.heatmap, options: { labels: true } });
-    expect(option.visualMap.inRange.color[0]).toBe('#1F4B7E');
+    expect(option.visualMap.inRange.color[0]).toBe('#0F505D');
     const data = series(option)[0]!.data as Opt[];
     const max = Math.max(...data.map((d) => d.value[2]));
-    expect(data.find((d) => d.value[2] === max)!.label.color).toBe('#07111F');
+    expect(data.find((d) => d.value[2] === max)!.label.color).toBe('#040A16');
     expect(series(option)[0]!.itemStyle.borderWidth).toBe(2);
   });
 });
@@ -344,7 +373,7 @@ describe('motion', () => {
     const off = buildOption({ definition: def, rows: [], theme: resolveTheme(), motion: resolveMotion({}, { reducedMotion: true }), locale: 'ko-KR', summary: '' });
     expect(off.option.animation).toBe(false);
     const on = build(definitions.column).option;
-    expect(on).toMatchObject({ animation: true, animationDuration: 500, animationDurationUpdate: 400 });
+    expect(on).toMatchObject({ animation: true, animationDuration: 2000, animationDurationUpdate: 400 });
   });
 });
 

@@ -1,0 +1,35 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "COD-CHART: Edge 디버그",
+      "type": "msedge",
+      "request": "launch",
+      "url": "http://localhost:5174",
+      "webRoot": "${workspaceFolder}",
+      "preLaunchTask": "vite: dev"
+    },
+    {
+      "name": "COD-CHART: Chrome 디버그",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:5174",
+      "webRoot": "${workspaceFolder}",
+      "preLaunchTask": "vite: dev"
+    },
+    {
+      "name": "COD-CHART: Dev 서버만",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "COD-CHART: 테스트 디버그 (Vitest)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npx vitest run",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

@@ -61,6 +61,7 @@ export type ChartType =
   | 'alert-level-v2'
   | 'alert-level-v3'
   | 'status-list'
+  | 'status-grid'
   | 'text'
   | 'progress';
 
@@ -152,6 +153,52 @@ export interface ChartOptions {
   stack?: 'none' | 'stacked' | 'percent';
   smooth?: boolean;
   showPoints?: boolean;
+  /**
+   * Line/area: the range navigator under the chart (slider + ctrl-wheel/drag zoom), like the
+   * live latency chart. `true`/`false` switches it explicitly; unset falls back to the `zoom` interaction.
+   */
+  zoom?: boolean;
+  /**
+   * Line/area: real-time append. Each update that adds newer x values slides the lines left,
+   * draws the new segment in at the right edge and pulses the newest point; points older than
+   * the window drop off the left. `true` keeps every x it is given; `{ windowSize }` keeps only
+   * the newest N x values (useful with `appendData`). Feed it by passing new data (contentsData
+   * or rows) or by `appendData` on the chart handle.
+   */
+  realtime?: boolean | { windowSize?: number };
+  /**
+   * Line/area entrance: 'together' (default) draws every line at once, slightly staggered;
+   * 'one-by-one' draws the lines one after another, each finishing before the next starts.
+   */
+  drawOrder?: 'together' | 'one-by-one';
+  /**
+   * Wall displays: every `intervalMs` (default 3000) the chart highlights its next mark and shows
+   * what hovering it would — tooltip, counted-up value, pie callout. Pauses while the pointer is
+   * on the chart. Chart engine types only.
+   */
+  autoTour?: boolean | { intervalMs?: number };
+  /**
+   * Live data delay: after this long without new data the panel shows "데이터 지연" and the
+   * newest-point marker greys out. Unset = automatic for live charts (stream, polling REST,
+   * `realtime`): 3× the observed update interval, at least 5 s; polling REST: 2.5× its interval.
+   * `false` turns the indicator off.
+   */
+  staleAfterMs?: number | false;
+  /**
+   * Panel alarm: when the latest value crosses `thresholds`, the whole panel frame glows in the
+   * status colour (critical pulses). Default on whenever `thresholds` are set.
+   */
+  alarm?: boolean;
+  /**
+   * Horizontal bar (one series): Top-N ranking. Bars stay sorted by value and swap places with
+   * an animation when the order changes (bar race); `top` rows are shown (default 10).
+   */
+  ranking?: boolean | { top?: number };
+  /**
+   * Heatmap: 'week-hour' — rows are bucketed by the timestamp in `encoding.x` into a fixed
+   * 7 days (월–일) × 24 hours grid, summing `encoding.value` (y is derived, not needed).
+   */
+  pattern?: 'week-hour';
   legend?: boolean | 'top' | 'bottom' | 'right';
   /** Value labels on marks. 'auto' = only where they fit / are selective. */
   labels?: boolean | 'auto';
@@ -189,6 +236,8 @@ export type ThemeTokenName =
 
 export interface ThemeSpec {
   name?: string;
+  /** Colour mode. Matches COD-M `appTheme`: "black" → dark (dashboards, always), "white" → light (settings group). Default dark. */
+  mode?: 'dark' | 'light';
   overrides?: Partial<Record<ThemeTokenName, string>>;
   /** Replace the categorical palette (validated hex list). */
   palette?: string[];
@@ -268,6 +317,10 @@ export interface ChartState {
   correlationId?: string;
   /** Non-fatal notices (rows dropped, sampled, invalid values…). */
   warnings: string[];
+  /** Live data has stopped arriving for longer than expected (see `options.staleAfterMs`). */
+  stale?: boolean;
+  /** When data last arrived (epoch ms). */
+  lastUpdateAt?: number;
 }
 
 export interface ChartEventPayload {

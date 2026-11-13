@@ -5,8 +5,8 @@
 ## 결정
 
 **모션 우선순위** (`resolveMotion`): `prefers-reduced-motion` → 제품 설정(`motion.enabled`) → 정의(`animation.enabled=false`, `preset: 'none'`) → 갱신 빈도 → preset 시간.
-- 진입 500ms(cubicOut, 항목당 40ms·전체 480ms 이내 순차 stagger + 시리즈당 90ms), 갱신 400ms, 강조 150ms.
-- Gauge 회전: 진입 1200ms(cubicOut), 갱신 800ms(cubicInOut). 갱신 tween이 스로틀되면 같은 2배 비율로 줄어든다.
+- 진입 2000ms(cubicOut, 항목당 120ms·전체 1500ms 이내 순차 stagger + 시리즈당 260ms), 갱신 400ms, 강조 150ms. 진입은 상황판에서 펼쳐지는 과정이 보이도록 느리게, 실시간 갱신은 빠르게 유지한다(2026-11-11 사용자 피드백: 500ms → 1200ms → 2000ms).
+- Gauge 회전: 진입 3000ms(cubicOut), 갱신 800ms(cubicInOut). 갱신 tween이 스로틀되면 같은 2배 비율로 줄어든다.
 - 관측된 갱신 간격이 1초 미만이면 갱신 tween을 간격의 40%로 줄이고, 300ms 미만이면 끈다.
 - OS reduced-motion 설정 변경은 런타임에 감지해 다시 렌더링한다.
 
@@ -31,7 +31,7 @@ ECharts를 그대로 쓰지 않고, 모든 차트 유형에 공통 디자인·�
 
 | 효과 | 규격 |
 |---|---|
-| 순차 진입 | `stagger()` — 막대·파이·히트맵·버블·퍼널·레이더·워드클라우드는 항목 순서대로, 라인은 시리즈별 90ms 간격으로 그려진다. 갱신은 지연 없이 동시에 시작. |
+| 순차 진입 | `stagger()` — 막대·파이·히트맵·버블·퍼널·레이더·워드클라우드는 항목 순서대로, 라인은 시리즈별 260ms 간격으로 그려진다. 갱신은 지연 없이 동시에 시작. |
 | 부드러운 수치 전환 | 갱신 tween + 막대 라벨·도넛 중앙 합계·Gauge 수치의 `valueAnimation`(숫자가 카운트됨). |
 | 실시간 이벤트 강조 | 갱신 간격이 관측되면(`motion.live`) 라인/영역 최신 지점에 ripple. 임계값 초과 시 라인은 최근 6개 초과 지점에 상태색 링, 막대는 상태색 테두리+glow. 모션 OFF면 ripple 대신 정적 링. 오버레이 series는 `fx:` id, silent, 툴팁 제외, 부모와 같은 name(범례 토글 연동). |
 | Gauge 회전 | 진행 호 끝을 따라 도는 tip 마커 + 상태 등급별 glow 강도(critical > warning > ok). 호·마커·중앙 수치가 같은 타이밍으로 움직인다. |

@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, toRef, useId } from 'vue';
+import { computed, onBeforeUnmount, ref, toRef, useId, watch } from 'vue';
 import type { ChartServices } from '../core/chart';
 import { buildAccessibleTable, buildSummary } from '../core/a11y';
 import { formatValue } from '../core/format';
 import { getDescriptor } from '../core/registry';
-import { resolveTheme, themeToCssVars } from '../core/theme';
-import type { ChartDefinition, ChartEventName, ChartEventPayload, ChartState, Row } from '../core/types';
+import { resolveTheme, STATUS_META, statusForValue, themeToCssVars } from '../core/theme';
+import type { ChartDefinition, ChartEventName, ChartEventPayload, ChartState, Row, StatusLevel } from '../core/types';
 import type { ContentsChartDefinition } from '../core/contents';
 import { useChartConfig } from './context';
 import { useChart } from './useChart';
@@ -14,6 +14,7 @@ import CvKpiCard from './widgets/CvKpiCard.vue';
 import CvMarkdown from './widgets/Markdown';
 import CvProgress from './widgets/CvProgress.vue';
 import CvStatusList from './widgets/CvStatusList.vue';
+import CvStatusGrid from './widgets/CvStatusGrid.vue';
 
 defineOptions({ name: 'CvChart' });
 
@@ -101,8 +102,58 @@ const errorMessage = computed(() => props.error ?? (state.value.status === 'erro
 const isLoading = computed(() => props.loading || state.value.status === 'loading' || state.value.status === 'idle');
 const isEmpty = computed(() => !errorMessage.value && !isLoading.value && !isText.value && rows.value.length === 0);
 const blockingLoad = computed(() => isLoading.value && rows.value.length === 0 && !errorMessage.value && !isText.value);
+
+/** Skeleton stays invisible for fast loads so static/fast data never flashes placeholder bars. */
+const SKELETON_DELAY_MS = 400;
+const skeletonRevealed = ref(false);
+let skeletonTimer: ReturnType<typeof setTimeout> | undefined;
+watch(blockingLoad, (on) => {
+  clearTimeout(skeletonTimer);
+  skeletonRevealed.value = false;
+  if (on) skeletonTimer = setTimeout(() => (skeletonRevealed.value = true), SKELETON_DELAY_MS);
+}, { immediate: true });
+onBeforeUnmount(() => clearTimeout(skeletonTimer));
 const emptyMessage = computed(() => raw.value.options?.emptyMessage ?? '표시할 데이터가 없습니다.');
 const canRetry = computed(() => !!raw.value.dataSource && raw.value.dataSource.kind !== 'static');
+
+// ── Live data delay ("데이터 지연 · 12초 전") ──
+const now = ref(Date.now());
+let staleTick: ReturnType<typeof setInterval> | undefined;
+watch(() => !!state.value.stale, (on) => {
+  clearInterval(staleTick);
+  now.value = Date.now();
+  if (on) staleTick = setInterval(() => (now.value = Date.now()), 1000);
+}, { immediate: true });
+onBeforeUnmount(() => clearInterval(staleTick));
+const staleText = computed(() => {
+  const at = state.value.lastUpdateAt;
+  if (!state.value.stale || !at) return '';
+  const s = Math.max(0, Math.round((now.value - at) / 1000));
+  return s < 60 ? `${s}초 전` : s < 3600 ? `${Math.floor(s / 60)}분 전` : `${Math.floor(s / 3600)}시간 전`;
+});
+
+// ── Panel alarm: the latest value against the thresholds ──
+const alarmLevel = computed<StatusLevel | null>(() => {
+  const d = def.value;
+  const thresholds = d?.options?.thresholds ?? [];
+  if (!d || !thresholds.length || d.options?.alarm === false || !rows.value.length) return null;
+  const e = d.encoding ?? {};
+  const fields = (Array.isArray(e.y) ? e.y : e.y ? [e.y] : e.value ? [e.value] : []) as string[];
+  if (!fields.length) return null;
+  // Cartesian: the rows of the newest x; otherwise the newest row (KPI-like) or all rows (rings).
+  const lastX = e.x ? rows.value[rows.value.length - 1]![e.x] : undefined;
+  const latest = e.x ? rows.value.filter((r) => r[e.x!] === lastX)
+    : e.label || e.category ? rows.value
+    : rows.value.slice(-1);
+  let worst: StatusLevel = 'ok';
+  for (const r of latest) for (const f of fields) {
+    const v = r[f];
+    if (typeof v !== 'number') continue;
+    const level = statusForValue(v, thresholds);
+    if (STATUS_META[level].rank > STATUS_META[worst].rank) worst = level;
+  }
+  return worst === 'warning' || worst === 'critical' ? worst : null;
+});
 
 const showTable = ref(false);
 /** Bumped by replayAnimation() to remount DOM widgets so their CSS entrance replays. */
@@ -116,6 +167,7 @@ const widget = computed(() => {
     case 'kpi': return CvKpiCard;
     case 'progress': return CvProgress;
     case 'status-list': return CvStatusList;
+    case 'status-grid': return CvStatusGrid;
     case 'table': return CvDataTable;
     default: return null;
   }
@@ -159,7 +211,7 @@ defineExpose({
 <template>
   <section
     class="cv-root cv-chart"
-    :class="[`cv-chart--${raw.type}`, { 'cv-chart--framed': framed, 'cv-chart--depth': theme.effects.depth, 'cv-chart--motion': motionOn, 'is-table': showTable }]"
+    :class="[`cv-chart--${raw.type}`, alarmLevel ? `cv-chart--alarm cv-chart--alarm-${alarmLevel}` : '', { 'cv-chart--framed': framed, 'cv-chart--depth': theme.effects.depth, 'cv-chart--motion': motionOn, 'cv-chart--stale': state.stale, 'is-table': showTable }]"
     :style="cssVars"
     role="figure"
     :aria-labelledby="raw.title ? `${uid}-title` : undefined"
@@ -173,7 +225,13 @@ defineExpose({
         <p v-if="raw.description" class="cv-chart__desc">{{ raw.description }}</p>
       </div>
       <div class="cv-chart__actions">
-        <span v-if="isLoading && rows.length > 0" class="cv-live" role="status">
+        <span v-if="alarmLevel" class="cv-alarm-badge cv-status-badge" :class="`cv-status--${alarmLevel}`" role="status">
+          <span aria-hidden="true">{{ STATUS_META[alarmLevel].icon }}</span> 임계치 초과
+        </span>
+        <span v-if="state.stale" class="cv-stale" role="status" :title="state.lastUpdateAt ? `마지막 수신 ${new Date(state.lastUpdateAt).toLocaleTimeString(locale)}` : undefined">
+          <span class="cv-stale__dot" aria-hidden="true" />데이터 지연<template v-if="staleText"> · {{ staleText }}</template>
+        </span>
+        <span v-else-if="isLoading && rows.length > 0" class="cv-live" role="status">
           <span class="cv-live__dot" aria-hidden="true" />갱신 중
         </span>
         <slot name="actions" />
@@ -228,7 +286,7 @@ defineExpose({
       </div>
 
       <Transition name="cv-fade">
-        <div v-if="blockingLoad" class="cv-overlay cv-overlay--loading" role="status" aria-label="불러오는 중">
+        <div v-if="blockingLoad" class="cv-overlay cv-overlay--loading" :class="{ 'is-revealed': skeletonRevealed }" role="status" aria-label="불러오는 중">
           <slot name="loading">
             <div class="cv-skeleton" :class="`cv-skeleton--${descriptor?.family ?? 'cartesian'}`" aria-hidden="true">
               <span v-for="i in 7" :key="i" :style="{ '--i': i }" />

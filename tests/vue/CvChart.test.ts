@@ -119,6 +119,25 @@ describe('states', () => {
     expect(w.find('.cv-overlay--loading').exists()).toBe(true);
   });
 
+  it('skeleton stays invisible for fast loads and reveals only after 400ms', async () => {
+    vi.useFakeTimers();
+    try {
+      const w = render(svg('column'), { data: [], loading: true });
+      await w.vm.$nextTick();
+      const overlay = () => w.find('.cv-overlay--loading');
+      expect(overlay().exists()).toBe(true); // announced to AT immediately
+      expect(overlay().classes()).not.toContain('is-revealed');
+      vi.advanceTimersByTime(399);
+      await w.vm.$nextTick();
+      expect(overlay().classes()).not.toContain('is-revealed');
+      vi.advanceTimersByTime(1);
+      await w.vm.$nextTick();
+      expect(overlay().classes()).toContain('is-revealed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('data service errors show a safe message, trace id and retry', async () => {
     const fetch = vi.fn().mockRejectedValueOnce(Object.assign(new Error('internal stack'), {})).mockResolvedValue({ rows: definitions.column.data.rows });
     const def = { ...svg('column'), data: { fields: definitions.column.data.fields }, dataSource: { kind: 'rest', endpointId: 'signups' } };

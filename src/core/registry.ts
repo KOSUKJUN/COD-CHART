@@ -93,10 +93,10 @@ const descriptors: ComponentDescriptor[] = [
     interactions: ['tooltip', 'selection', 'drilldown'], defaults: { options: { drilldown: true }, interactions: ['tooltip', 'drilldown'] },
   },
   {
-    type: 'radar', displayName: '레이더', description: '다중 항목 비교 (다각형)',
+    type: 'radar', displayName: '레이더', description: '다중 항목 비교 (스파이더 웹)',
     family: 'cartesian', engine: 'echarts', renderers: ECHARTS_RENDERERS, required: ['category', 'value'], optional: ['color'],
     interactions: ['tooltip', 'selection', 'legend-toggle'], numeric: ['value'],
-    defaults: { options: { legend: 'top' }, interactions: ['tooltip', 'legend-toggle'], height: 320 },
+    defaults: { options: { legend: 'right' }, interactions: ['tooltip', 'legend-toggle'], height: 320 },
   },
   {
     type: 'bubble', displayName: '버블', description: '범주별 항목의 크기 비교',
@@ -301,6 +301,11 @@ const descriptors: ComponentDescriptor[] = [
   {
     type: 'text', displayName: '텍스트 카드', description: '제한된 마크다운 (HTML/script 제거)', family: 'widget',
     engine: 'native', renderers: [], required: [], optional: [], interactions: [], defaults: {},
+  },
+  {
+    type: 'status-grid', displayName: '장비 상태 타일', description: '수백 대 장비의 상태를 한 화면에 칸으로', family: 'widget', engine: 'native',
+    renderers: [], required: ['title', 'severity'], optional: ['description'], interactions: ['selection'],
+    defaults: { interactions: ['selection'], height: 260 },
   },
   {
     type: 'progress', displayName: '진행률/임계치', description: '값 / 최대값 / 임계 상태', family: 'indicator',

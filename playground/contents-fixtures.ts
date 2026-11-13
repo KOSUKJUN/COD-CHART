@@ -1,11 +1,15 @@
 import type { ContentsChartDefinition } from '../src';
 
+// Five series × eight 5-minute buckets, like a COD-M traffic content.
 const series = {
-  timesArr: ['17:00', '17:05', '17:10', '17:15', '17:20'],
+  timesArr: ['17:00', '17:05', '17:10', '17:15', '17:20', '17:25', '17:30', '17:35'],
   data: [
-    { key: 'INBOUND BPS', color: '#4D8DFF', values: [142, 186, 182, 196, 189].map((y, x) => ({ x, y })) },
-    { key: 'INBOUND PPS', color: '#36D6F5', values: [212, 216, 136, 118, 129].map((y, x) => ({ x, y })) },
-  ],
+    { key: 'INBOUND BPS', values: [142, 186, 182, 196, 189, 214, 228, 205] },
+    { key: 'OUTBOUND BPS', values: [212, 216, 136, 118, 129, 152, 171, 160] },
+    { key: 'INBOUND PPS', values: [96, 118, 124, 109, 132, 141, 126, 148] },
+    { key: 'OUTBOUND PPS', values: [64, 72, 88, 95, 81, 77, 99, 112] },
+    { key: 'SESSIONS', values: [38, 45, 52, 61, 58, 66, 73, 70] },
+  ].map((s) => ({ key: s.key, values: s.values.map((y, x) => ({ x, y })) })),
 };
 
 const base = { schemaVersion: '1.0.0' };
@@ -17,7 +21,8 @@ export const contentsDefinitions: ContentsChartDefinition[] = [
   { ...base, id: 'contents-column', type: 'column', title: 'Contents · 수직 막대', contentsData: series },
   { ...base, id: 'contents-point', type: 'line', title: 'Contents · 선형 차트(Point)', contentsData: series, options: { showPoints: true } },
   { ...base, id: 'contents-pie', type: 'pie', title: 'Contents · Pie 차트', contentsData: [
-    { col0: 'Canon', col1: 11.3 }, { col0: 'PanasonicHD', col1: 14.5 }, { col0: 'Defeway', col1: 17.7 },
+    { col0: 'Hikvision', col1: 24.6 }, { col0: 'Defeway', col1: 17.7 }, { col0: 'PanasonicHD', col1: 14.5 },
+    { col0: 'Canon', col1: 11.3 }, { col0: 'Axis', col1: 8.2 },
   ] },
   { ...base, id: 'contents-polar', type: 'polar-pie', title: 'Contents · Pie 차트(Polar)', contentsData: [
     { id: '0', parent: '', name: 'The World', value: '15' },

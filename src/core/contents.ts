@@ -1,5 +1,5 @@
 import { isPlainObject } from './sanitize';
-import { isSafeColor, PREMIUM_DARK_BLUE_PALETTE } from './theme';
+import { isSafeColor, CYBER_NEON_PALETTE } from './theme';
 import type { ChartDefinition, ChartType, DataSpec, Encoding, Row } from './types';
 
 export interface CartesianContentsData {
@@ -80,7 +80,7 @@ export function convertContentsData(type: ChartType, input: unknown): {
     });
     if (colors.some(Boolean)) {
       if (colors.length > 12) fail('.data', '색상 지정 시 시리즈는 12개 이하여야 합니다.');
-      palette = colors.map((c, i) => c ?? PREMIUM_DARK_BLUE_PALETTE[i % PREMIUM_DARK_BLUE_PALETTE.length]!);
+      palette = colors.map((c, i) => c ?? CYBER_NEON_PALETTE[i % CYBER_NEON_PALETTE.length]!);
     }
     dataFields = fields(['category', 'string'], ['series', 'string'], ['value', 'number']);
     encoding = { x: 'category', y: 'value', color: 'series' };

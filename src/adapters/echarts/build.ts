@@ -11,8 +11,9 @@ import { escapeHtml, fieldLabel, formatAxisValue, formatTime, formatValue } from
 import { deepMerge, isPlainObject } from '../../core/sanitize';
 import { ALL_PAIRS_SAFE_SLOTS, STATUS_META, statusForValue, type ResolvedTheme } from '../../core/theme';
 import type { ChartDefinition, FieldDef, Row, StatusLevel } from '../../core/types';
-import { alpha, DEPTH_PX, deltaText, depthShadow, fillGradient, glow, isEffectSeries, pulseSeries, shade, sphere, stagger, type PulsePoint } from './effects';
+import { alpha, DEPTH_PX, deltaText, depthShadow, discSheen, fillGradient, glow, holo, hoverSpring, hudRings, landingFlash, pieSlice, sweepEdge, wallPolygons, isEffectSeries, neonCore, pulseSeries, shade, SERIES_STAGGER_MS, sphere, stagger, swell, type PulsePoint } from './effects';
 import { layoutWords } from './word-layout';
+import { packCircles } from './pack-layout';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Opt = Record<string, any>;
@@ -31,7 +32,24 @@ export interface BuildResult {
   /** Treemap node id → rows. */
   nodeRows?: Map<string, Row[]>;
   warnings: string[];
+  /**
+   * Line/area: total length of the entrance draw. A data update merged in before it ends would
+   * freeze the lines still waiting to draw, so the adapter holds updates back until then.
+   */
+  entranceMs?: number;
+  /**
+   * Line/area one-by-one: the draw keeps cycling. After the entrance the finished chart holds
+   * for `holdMs`, fades out and draws in again, line by line (the adapter runs the cycle).
+   */
+  loop?: { holdMs: number };
 }
+
+/** How long a one-by-one chart rests fully drawn before the next drawing cycle. */
+export const DRAW_LOOP_HOLD_MS = 3000;
+/** Auto-tour: default time on each mark. */
+export const AUTO_TOUR_MS = 3000;
+/** One-by-one: pause after a line has finished drawing before the next line starts. */
+export const ONE_BY_ONE_GAP_MS = 1000;
 
 /** Stable colour slots per entity name, persisted by the adapter across updates. */
 export type SlotMap = Map<string, number>;
@@ -50,6 +68,44 @@ export const OTHER_LABEL = '기타';
 
 interface Ctx extends RenderContext {
   slots: SlotMap;
+  /** Structural (first / replayed) render: one-shot entrance effects are included. */
+  entrance?: boolean;
+  /** Real-time x labels → running sequence number, persisted by the adapter (see `xSequence`). */
+  xSeq?: XSeqMap;
+}
+
+/** x label → sequence number; key '' holds the running counter. */
+export type XSeqMap = Map<string, number>;
+
+/**
+ * Give each x label a sequence number that survives updates: a label already seen keeps its
+ * number, a new one gets the next. Real-time charts thin their x labels by this number (every
+ * k-th), so the labels that are shown stay the same ones while the window slides.
+ */
+function xSequence(map: XSeqMap, labels: string[]): number[] {
+  let prev = -1;
+  const out = labels.map((label) => {
+    let s = label === '' ? undefined : map.get(label);
+    if (s === undefined || s <= prev) {
+      s = (map.get('') ?? 0) + 1;
+      map.set('', s);
+      if (label !== '') map.set(label, s);
+    }
+    prev = s;
+    return s;
+  });
+  // Forget labels well behind the window (a short tail stays, so a label that is scrolling out
+  // can still be named while it leaves).
+  const floor = (out[0] ?? 0) - 64;
+  for (const [k, s] of map) if (k !== '' && s < floor) map.delete(k);
+  return out;
+}
+
+/** Sequence number → x label, for every label the map still knows (window plus recent tail). */
+function labelsBySeq(map: XSeqMap): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const [k, s] of map) if (k !== '') out.set(s, k);
+  return out;
 }
 
 // ── Shared pieces ─────────────────────────────────────────────────────────
@@ -78,7 +134,7 @@ function baseOption(ctx: Ctx): Opt {
   };
 }
 
-function tooltipBase(t: ResolvedTheme, trigger: 'axis' | 'item', pointer?: 'line' | 'shadow'): Opt {
+function tooltipBase(t: ResolvedTheme, trigger: 'axis' | 'item', pointer?: 'line' | 'shadow' | 'none'): Opt {
   return {
     show: true,
     trigger,
@@ -91,6 +147,8 @@ function tooltipBase(t: ResolvedTheme, trigger: 'axis' | 'item', pointer?: 'line
     padding: [10, 12],
     textStyle: { color: t.tokens.textPrimary, fontFamily: t.fontFamily, fontSize: 12 },
     extraCssText:
+      // Long names wrap inside a capped width instead of stretching the panel past the chart.
+      `max-width:min(300px,92%);white-space:normal;word-break:keep-all;overflow-wrap:anywhere;` +
       `border-radius:${t.radius.md}px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);` +
       `box-shadow:0 12px 32px rgba(0,0,0,.36)${t.effects.glow ? `,0 0 24px ${alpha(t.tokens.accentBlue, 0.16)}` : ''};`,
     transitionDuration: 0.15,
@@ -98,6 +156,7 @@ function tooltipBase(t: ResolvedTheme, trigger: 'axis' | 'item', pointer?: 'line
       ? {
           axisPointer: pointer === 'line'
             ? { type: 'line', lineStyle: { color: alpha(t.tokens.accentCyan, 0.55), width: 1, type: 'dashed' }, label: { show: false } }
+            : pointer === 'none' ? { type: 'none' }
             : { type: 'shadow', shadowStyle: { color: t.tokens.selection } },
         }
       : {}),
@@ -105,13 +164,14 @@ function tooltipBase(t: ResolvedTheme, trigger: 'axis' | 'item', pointer?: 'line
 }
 
 function marker(color: string): string {
-  return `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:8px;background:${escapeHtml(color)}"></span>`;
+  return `<span style="display:inline-block;flex-shrink:0;width:8px;height:8px;border-radius:2px;margin-right:8px;background:${escapeHtml(color)}"></span>`;
 }
 
 function tooltipRow(color: string, name: string, value: string, strong = false, detail = ''): string {
   return `<div style="display:flex;align-items:center;gap:16px;justify-content:space-between;line-height:20px">` +
-    `<span style="display:flex;align-items:center;color:inherit;opacity:.82">${marker(color)}${escapeHtml(name)}</span>` +
-    `<span style="font-variant-numeric:tabular-nums;font-weight:${strong ? 700 : 600}">${escapeHtml(value)}` +
+    `<span style="display:flex;align-items:center;min-width:0;color:inherit;opacity:.82">${marker(color)}${escapeHtml(name)}</span>` +
+    // data-cv-count: the adapter counts this value up when the tooltip appears.
+    `<span style="flex-shrink:0;white-space:nowrap;font-variant-numeric:tabular-nums;font-weight:${strong ? 700 : 600}"><span data-cv-count>${escapeHtml(value)}</span>` +
     (detail ? `<span style="margin-left:8px;font-size:11px;font-weight:500;opacity:.62">${escapeHtml(detail)}</span>` : '') +
     `</span></div>`;
 }
@@ -126,7 +186,9 @@ function legendOption(ctx: Ctx, names: string[], position: 'top' | 'bottom' | 'r
     type: 'scroll', data: names, icon: 'roundRect', itemWidth: 10, itemHeight: 10, itemGap: 16,
     textStyle: { color: t.textSecondary, fontSize: 12 }, inactiveColor: t.disabled, inactiveBorderColor: t.disabled,
     pageIconColor: t.textSecondary, pageIconInactiveColor: t.disabled, pageTextStyle: { color: t.textMuted },
-    selectedMode: ctx.definition.interactions?.includes('legend-toggle') !== false,
+    // Every legend filters its chart (product rule); hidden items keep their grey state across redraws.
+    selectedMode: true,
+    ...(ctx.hidden?.size ? { selected: Object.fromEntries(names.map((n) => [n, !ctx.hidden!.has(n)])) } : {}),
   };
   if (position === 'right') return { ...common, orient: 'vertical', right: 0, top: 'middle' };
   if (position === 'bottom') return { ...common, bottom: 0, left: 0 };
@@ -154,7 +216,8 @@ function valueAxis(t: ResolvedTheme, field: FieldDef | undefined, locale: string
     type: 'value',
     ...axisCommon(t),
     axisLine: { show: false },
-    splitLine: { show: true, lineStyle: { color: t.tokens.gridLine, width: 1 } },
+    // Dashed HUD grid (dark: faint accent; light: neutral rule).
+    splitLine: { show: true, lineStyle: { color: t.mode === 'light' ? t.tokens.gridLine : alpha(t.tokens.accentCyan, 0.09), width: 1, type: [4, 4] } },
     axisLabel: {
       ...axisCommon(t).axisLabel,
       formatter: (v: number) => (percent ? `${Math.round(v * 100)}%` : formatAxisValue(v, field, locale)),
@@ -298,6 +361,54 @@ function buildCartesian(ctx: Ctx): BuildResult {
     }
   }
 
+  // Real-time append (line/area): keep only the newest `windowSize` x values, so appended data
+  // pushes the oldest off the left edge. Matching x labels keep their identity across updates,
+  // which is what makes ECharts slide the existing points left instead of re-drawing the lines.
+  const realtime = isBarLike ? undefined : def.options?.realtime || undefined;
+  const windowSize = typeof realtime === 'object' ? realtime.windowSize : undefined;
+  if (windowSize) {
+    if (!xIsContinuous && categories.length > windowSize) {
+      const cut = categories.length - windowSize;
+      categories = categories.slice(cut);
+      for (const s of series) { s.values = s.values.slice(cut); s.rows = s.rows.slice(cut); }
+    } else if (xIsContinuous) {
+      for (const s of series) if (s.pairs.length > windowSize) { s.pairs = s.pairs.slice(-windowSize); s.rows = s.rows.slice(-windowSize); }
+    }
+  }
+  // Top-N ranking (horizontal bar, one series): ECharts sorts the bars by value on every update,
+  // so a bar that overtakes another visibly swaps places with it (bar-race).
+  const rankingOpt = type === 'bar' && horizontal && series.length === 1 ? def.options?.ranking : undefined;
+  const ranking = rankingOpt ? { top: Math.min((typeof rankingOpt === 'object' ? rankingOpt.top : undefined) ?? 10, categories.length) } : null;
+  if (def.options?.ranking && !ranking) warnings.push('순위(ranking)는 시리즈 하나인 가로 막대에서만 동작합니다.');
+  // Real-time over category x: each x label gets a running sequence number and the x axis
+  // becomes a numeric axis over those numbers. Positions are then continuous, which lets the
+  // adapter shift in two steps — the oldest point leaves first, then the new segment is drawn
+  // out from the previous last point (a category slot cannot hold a point in between).
+  const xLabels = categories.map((c) => (xField?.type === 'time' ? formatTime(c, locale) : String(c)));
+  const xSeqMap: XSeqMap = ctx.xSeq ?? new Map();
+  const rtSeq = realtime && !xIsContinuous && categories.length ? xSequence(xSeqMap, xLabels) : null;
+  /** x position of category i (its sequence number in real time, else the index). */
+  const xAt = (i: number) => (rtSeq ? rtSeq[i]! : i);
+  const rtIndex = new Map((rtSeq ?? []).map((q, i) => [q, i]));
+  // Real time over a time x (stream data sources): points keyed by their timestamp and the x
+  // window pinned to the data's time span, so the adapter can scroll it the same way.
+  const rtTime = realtime && xIsContinuous && xField?.type === 'time' && !stacked
+    ? (() => {
+        const xs = series.flatMap((s) => s.pairs.map((p) => p[0]));
+        return xs.length ? { min: Math.min(...xs), max: Math.max(...xs) } : null;
+      })()
+    : null;
+  // Newest-point pulse: streamed/polled data, or an explicit real-time chart.
+  const live = ctx.motion.live || (!!realtime && ctx.motion.enabled);
+  // Line/area entrance order. One-by-one: each line draws fully before the next one starts.
+  const oneByOne = !isBarLike && def.options?.drawOrder === 'one-by-one' && ctx.motion.enabled;
+  // One line's draw: 1.8 s at the default 2 s entrance.
+  const lineMs = Math.round(Math.max(600, ctx.motion.entranceMs * 0.9));
+  // Pause between one finished line and the start of the next, so each line reads on its own.
+  const lineGapMs = ONE_BY_ONE_GAP_MS;
+  const drawSlot = new Map(series.filter((s) => !ctx.hidden?.has(s.name)).map((s, i) => [s.name, i]));
+  const drawDelay = (si: number) => (oneByOne ? (drawSlot.get(series[si]!.name) ?? 0) * (lineMs + lineGapMs) : ctx.motion.enabled ? si * SERIES_STAGGER_MS : 0);
+
   // Percent stacking: normalise per category.
   let totals: number[] = [];
   if (percent && !xIsContinuous) {
@@ -305,7 +416,8 @@ function buildCartesian(ctx: Ctx): BuildResult {
   }
 
   const legendPos = legendPosition(def, series.length);
-  const zoom = !isBarLike && def.interactions?.includes('zoom');
+  // Range navigator: explicit options.zoom wins, otherwise the 'zoom' interaction.
+  const zoom = !isBarLike && (def.options?.zoom ?? def.interactions?.includes('zoom') === true);
   const selection = def.interactions?.includes('selection');
   const totalPoints = series.reduce((a, s) => a + (xIsContinuous ? s.pairs.length : s.values.length), 0);
   const large = totalPoints > 4000;
@@ -317,9 +429,12 @@ function buildCartesian(ctx: Ctx): BuildResult {
 
   const echSeries: Opt[] = series.map((s, si): Opt => {
     const color = colors[si]!;
+    const plain = (v: number | null, i: number) => (percent ? (v == null ? null : totals[i] ? Math.max(0, v) / totals[i]! : 0) : v);
     const data: unknown[] = xIsContinuous
-      ? s.pairs
-      : s.values.map((v, i) => (percent ? (v == null ? null : totals[i] ? Math.max(0, v) / totals[i]! : 0) : v));
+      ? (rtTime ? s.pairs.map((p) => ({ name: String(p[0]), value: [p[0], p[1]] })) : s.pairs)
+      // Real time: keyed by label so a point keeps its identity while the window slides.
+      : rtSeq ? s.values.map((v, i) => ({ name: xLabels[i], value: [rtSeq[i], plain(v, i)] }))
+      : s.values.map(plain);
     // Live event emphasis on bars: a breached threshold lights the bar in its status colour.
     if (isBarLike && thresholds.length && !stacked) {
       s.values.forEach((v, i) => {
@@ -344,7 +459,7 @@ function buildCartesian(ctx: Ctx): BuildResult {
       ...(si === 0 ? { markLine: thresholdMarkLine(ctx, horizontal) } : {}),
       universalTransition: { enabled: true },
     };
-    if (isBarLike && t.effects.depth && !large) {
+    if (isBarLike && t.effects.depth && !large && !ranking) {
       const display = s.values.map((v, i) => (percent ? (v == null ? null : totals[i] ? Math.max(0, v) / totals[i]! : 0) : v));
       const bases = s.values.map((_, i) => {
         if (!stacked) return 0;
@@ -373,6 +488,9 @@ function buildCartesian(ctx: Ctx): BuildResult {
         emphasis: { ...common.emphasis, itemStyle: glow(fxTheme, color, 1.8) },
         type: 'bar',
         barMaxWidth: 28,
+        // Faint full-length track behind each bar (HUD meter look).
+        showBackground: !stacked,
+        backgroundStyle: { color: alpha(t.tokens.accentCyan, t.mode === 'light' ? 0.05 : 0.045), borderRadius: horizontal ? [0, r, r, 0] : [r, r, 0, 0] },
         barMinHeight: 1,
         barGap: '12%',
         barCategoryGap: series.length > 1 && !stacked ? '28%' : '36%',
@@ -381,12 +499,15 @@ function buildCartesian(ctx: Ctx): BuildResult {
         select: { itemStyle: { borderColor: t.tokens.focus, borderWidth: 2 } },
         itemStyle: {
           // Value end lit, fading toward the baseline (subtler inside stacks so segments stay distinct).
-          color: fillGradient(t, color, horizontal ? 'right' : 'up', stacked ? 0.78 : 0.42),
+          color: fillGradient(t, color, horizontal ? 'right' : 'up', stacked ? 0.78 : 0.14),
+          ...(stacked ? {} : glow(fxTheme, color, 0.5)),
           borderRadius: horizontal ? [0, r, r, 0] : [r, r, 0, 0],
           // 2px surface gap between stacked segments.
           ...(stacked ? { borderColor: t.tokens.bgSurface, borderWidth: 1 } : {}),
         },
         label: labelForBars(ctx, horizontal, yField, percent),
+        // B — hover count-up value at the bar end (the adapter draws it; skipped when labels show).
+        ...(!stacked ? { hoverValue: { horizontal, color, format: (v: number) => formatValue(v, yField, { locale }) } } : {}),
       };
     }
     // line / area
@@ -394,8 +515,10 @@ function buildCartesian(ctx: Ctx): BuildResult {
     return {
       ...common,
       type: 'line',
-      // Lines draw in left → right (clip animation); each series starts slightly after the previous.
-      animationDelay: ctx.motion.enabled ? si * 90 : 0,
+      // Lines draw in left → right (clip animation); each series starts slightly after the previous
+      // ('together'), or only once the previous line has finished ('one-by-one').
+      animationDelay: drawDelay(si),
+      ...(oneByOne ? { animationDuration: lineMs } : {}),
       smooth: def.options?.smooth ? 0.35 : false,
       showSymbol: def.options?.showPoints ?? false,
       symbol: 'circle',
@@ -403,8 +526,10 @@ function buildCartesian(ctx: Ctx): BuildResult {
       connectNulls: false,
       sampling: 'lttb',
       // 3D style: the line casts a drop shadow onto the surface below it (replaces the glow).
-      lineStyle: { width: t.effects.depth ? 2.5 : 2, color, ...glow(fxTheme, color), ...depthShadow(fxTheme) },
+      // Neon tube: bright core stroke, bloom in the base hue (3D: drop shadow instead).
+      lineStyle: { width: t.effects.depth ? 2.5 : 2, color: neonCore(fxTheme, color), ...glow(fxTheme, color), ...depthShadow(fxTheme) },
       itemStyle: { color, borderColor: t.tokens.bgSurface, borderWidth: 2 },
+      // Lines carry no fill at all, so they never read as an area chart.
       ...(area
         ? {
             areaStyle: stacked
@@ -434,18 +559,41 @@ function buildCartesian(ctx: Ctx): BuildResult {
       return percent ? (totals[i] ? acc / totals[i]! : 0) : acc;
     };
     series.forEach((s, si) => {
+      // Data flow: a light pulse travels along each neon line after it has drawn in.
+      if (ctx.motion.enabled && fxTheme.effects.glow && !stacked && !xIsContinuous && !def.options?.smooth) {
+        const runs: number[][][] = [];
+        let run: number[][] = [];
+        s.values.forEach((v, i) => {
+          if (v == null) { if (run.length > 1) runs.push(run); run = []; } else run.push([xAt(i), v]);
+        });
+        if (run.length > 1) runs.push(run);
+        if (runs.length) {
+          const c = colors[si]!;
+          echSeries.push({
+            id: `fx:flow:${s.name}`, name: s.name, type: 'lines', coordinateSystem: 'cartesian2d', polyline: true,
+            silent: true, tooltip: { show: false }, z: 4, animation: false,
+            lineStyle: { width: 0, opacity: 0 },
+            effect: {
+              show: true, delay: oneByOne ? drawDelay(si) + lineMs : ctx.motion.entranceMs + si * SERIES_STAGGER_MS, period: 4 + si * 0.6, trailLength: 0.28,
+              symbol: 'circle', symbolSize: 4, color: t.mode === 'light' ? c : shade(c, 0.65), loop: true,
+            },
+            data: runs.map((coords) => ({ coords })),
+          });
+        }
+      }
       // Live: a ripple on the newest point of every streaming series.
-      if (ctx.motion.live && !(stacked && xIsContinuous)) {
+      if (live && !(stacked && xIsContinuous)) {
         let point: unknown[] | null = null;
         if (xIsContinuous) {
           for (let i = s.pairs.length - 1; i >= 0 && !point; i--) if (s.pairs[i]![1] != null) point = s.pairs[i]!;
         } else {
           for (let i = s.values.length - 1; i >= 0 && !point; i--) {
             const y = plottedY(si, i);
-            if (y != null) point = [i, y];
+            if (y != null) point = [xAt(i), y];
           }
         }
-        if (point) echSeries.push(pulseSeries(fxTheme, ctx.motion, `live:${s.name}`, s.name, [{ value: point, color: colors[si]! }]));
+        // Late data (stale): the marker greys out and stops rippling — the line is no longer live.
+        if (point) echSeries.push(pulseSeries(fxTheme, ctx.stale ? { ...ctx.motion, enabled: false } : ctx.motion, `live:${s.name}`, s.name, [{ value: point, color: ctx.stale ? t.tokens.textMuted : colors[si]! }]));
       }
       // Threshold events: ring the most recent breaches in their status colour.
       if (thresholds.length && !stacked) {
@@ -455,11 +603,17 @@ function buildCartesian(ctx: Ctx): BuildResult {
           const v = raw[i];
           if (v == null) continue;
           const level = statusForValue(v, thresholds);
-          if (level !== 'ok') hits.push({ value: xIsContinuous ? s.pairs[i]! : [i, v], color: t.status[level] });
+          if (level !== 'ok') hits.push({ value: xIsContinuous ? s.pairs[i]! : [xAt(i), v], color: t.status[level] });
         }
         if (hits.length) echSeries.push(pulseSeries(fxTheme, ctx.motion, `breach:${s.name}`, s.name, hits.reverse(), 7));
       }
     });
+  }
+  // A — landing flash: each bar's value end flashes once as it lands (entrance only).
+  if (ctx.entrance && isBarLike && !stacked && !t.effects.depth && !large && !xIsContinuous && !ranking) {
+    echSeries.push(...landingFlash(fxTheme, ctx.motion, series.map((s, si) => ({ name: s.name, color: colors[si]!, values: s.values, delay: stagger(ctx.motion, pointCount, si) })), {
+      horizontal, barMaxWidth: 28, barGap: '12%', barCategoryGap: series.length > 1 ? '28%' : '36%', hidden: ctx.hidden,
+    }));
   }
   const prevValue = (si: number, di: number): unknown => {
     const s = series[si];
@@ -478,6 +632,98 @@ function buildCartesian(ctx: Ctx): BuildResult {
         ...(horizontal ? { inverse: true } : {}),
         axisLabel: { ...axisCommon(t).axisLabel, width: horizontal ? 120 : undefined, overflow: 'truncate' },
       };
+  // Real-time (category x): the x labels scroll with the data, like Highcharts' dynamic update.
+  // ECharts redraws axis labels in place (they jump), so the native labels are kept only for
+  // layout (transparent) and a custom series draws the visible ones, keyed by label, so each
+  // label slides left with its point, a new one slides in from the right and the oldest slides
+  // out at the left edge.
+  /**
+   * The sliding x labels (custom series, one text per label keyed by its name). `textOf` names a
+   * label from its x; `thinBy` (category mode) keeps every k-th by sequence number when crowded.
+   */
+  const xLabelSeries = (data: Opt[], textOf: (x: number, seq: number) => string, thin: boolean): Opt => {
+    const fontSize = 11;
+    return {
+      id: 'fx:xlabels', name: 'fx:xlabels', type: 'custom', coordinateSystem: 'cartesian2d',
+      silent: true, tooltip: { show: false }, legendHoverLink: false, clip: false, z: 1,
+      encode: { x: 0, y: 1 },
+      data,
+      renderItem: (params: Opt, api: Opt) => {
+        const cs = params.coordSys as { x: number; y: number; width: number; height: number };
+        const label = textOf(api.value(0) as number, api.value(2) as number);
+        if (thin) {
+          // Thin by sequence number so the shown labels stay the same ones as the window slides.
+          const step = Math.max(1, api.size([1, 0])[0] as number);
+          const every = Math.max(1, Math.ceil((label.length * fontSize * 0.62 + 14) / step));
+          if ((api.value(2) as number) % every !== 0) return null;
+        }
+        const x = api.coord([api.value(0), 0])[0] as number;
+        // Outside the x window (parked beyond the right edge, or scrolled past the left) a label is
+        // transparent, so it fades in as it scrolls in and fades out as it scrolls away.
+        const inside = x >= cs.x - 1 && x <= cs.x + cs.width + 1;
+        return {
+          type: 'text', x, y: cs.y + cs.height + 10,
+          style: { text: label, fill: t.tokens.textMuted, fontSize, fontFamily: t.fontFamily, align: 'center', verticalAlign: 'top', opacity: inside ? 1 : 0 },
+          transition: ['x', 'style'],
+          enterFrom: { style: { opacity: 0 } },
+          // A new label arrives at the pace of the scroll, not the slow chart entrance.
+          enterAnimation: { duration: ctx.motion.updateMs },
+          // No `leaveTo`: ECharts (6.0) throws in the leave transition of a removed custom element,
+          // which aborts the whole label redraw. The oldest label just drops at the left edge.
+        };
+      },
+    };
+  };
+  if (rtSeq) {
+    const labels = xLabels;
+    const seqs = rtSeq;
+    // Text by sequence number, not position: while scrolling, the series also holds the leaving label.
+    const nameOf = labelsBySeq(xSeqMap);
+    // Numeric x over the sequence numbers, spanning exactly the window (see rtSeq).
+    Object.assign(categoryAxis, {
+      type: 'value', data: undefined, min: seqs[0], max: seqs[seqs.length - 1], interval: 1, boundaryGap: false,
+      // Native labels only reserve the layout space; the custom series below draws the visible ones.
+      axisLabel: { ...categoryAxis.axisLabel, color: 'transparent', formatter: (v: number) => labels[rtIndex.get(v) ?? -1] ?? '' },
+    });
+    delete categoryAxis.data;
+    echSeries.push(xLabelSeries(labels.map((label, i) => ({ name: label, value: [seqs[i], 0, seqs[i]] })), (_x, seq) => nameOf.get(seq) ?? '', true));
+  }
+  if (rtTime && rtTime.max > rtTime.min) {
+    // Real time over a time x: the window is pinned to the data's time span and the labels sit on
+    // round time steps (one more beyond each edge, so they can scroll in and out).
+    const { min, max } = rtTime;
+    const step = TIME_STEPS.find((s) => s >= (max - min) / 6) ?? TIME_STEPS[TIME_STEPS.length - 1]!;
+    const ticks: number[] = [];
+    for (let x = Math.floor(min / step) * step; x <= max + step; x += step) ticks.push(x);
+    Object.assign(categoryAxis, {
+      min, max,
+      axisLabel: { ...categoryAxis.axisLabel, color: 'transparent', formatter: (v: number) => clockText(v, step) },
+    });
+    echSeries.push(xLabelSeries(ticks.map((x) => ({ name: String(x), value: [x, 0, 0] })), (x) => clockText(x, step), false));
+  }
+  if (ranking) {
+    // Bar-race: one colour per entity (follows it as it moves), value labels counting along,
+    // only the top N rows shown; the category axis animates its labels with the bars.
+    const s0 = echSeries[0]!;
+    const values = series[0]!.values;
+    Object.assign(s0, {
+      realtimeSort: true,
+      animationDelay: 0,
+      showBackground: false,
+      emphasis: { ...s0.emphasis, focus: 'none' },
+      data: values.map((v, i) => {
+        const c = t.palette[slotFor(ctx.slots, String(categories[i])) % t.palette.length]!;
+        return { value: v, itemStyle: { color: fillGradient(t, c, 'right', 0.14), borderRadius: [0, 4, 4, 0], ...glow(fxTheme, c, 0.5) } };
+      }),
+      label: { ...labelForBars(ctx, true, yField, false), show: true, valueAnimation: ctx.motion.enabled, precision: 0 },
+    });
+    Object.assign(categoryAxis, {
+      max: ranking.top - 1,
+      animationDuration: ctx.motion.updateMs,
+      animationDurationUpdate: ctx.motion.updateMs,
+      axisLabel: { ...categoryAxis.axisLabel, color: t.tokens.textSecondary },
+    });
+  }
   const valAxis = valueAxis(t, yField, locale, percent);
   const unitName = !percent && yField?.unit && series.length >= 1 ? yField.unit : '';
   if (unitName) Object.assign(valAxis, { name: unitName, nameGap: 12 });
@@ -494,13 +740,16 @@ function buildCartesian(ctx: Ctx): BuildResult {
     yAxis: horizontal ? categoryAxis : valAxis,
     series: echSeries,
     tooltip: {
-      ...tooltipBase(t, 'axis', isBarLike ? 'shadow' : 'line'),
+      // Bars: no hover band behind the category — the hovered bar's own highlight is enough.
+      ...tooltipBase(t, 'axis', isBarLike ? 'none' : 'line'),
       show: def.interactions?.includes('tooltip') !== false,
       formatter: (params: Opt | Opt[]) => {
         const list = (Array.isArray(params) ? params : [params]).filter((p) => !isEffectSeries(p) && p.value !== null && p.value !== undefined);
         if (!list.length) return '';
         const p0 = list[0]!;
-        const head = xIsContinuous ? xLabelFormatter(Array.isArray(p0.value) ? p0.value[0] : p0.axisValue) : String(p0.axisValueLabel ?? p0.name);
+        const head = xIsContinuous ? xLabelFormatter(Array.isArray(p0.value) ? p0.value[0] : p0.axisValue)
+          : rtSeq ? String(p0.name ?? '') // real time: points carry their x label as name
+          : String(p0.axisValueLabel ?? p0.name);
         const body = list.map((p) => {
           const raw = Array.isArray(p.value) ? p.value[1] : p.value;
           let text = formatValue(raw, yField, { locale });
@@ -525,6 +774,19 @@ function buildCartesian(ctx: Ctx): BuildResult {
     },
   };
   if (legendPos) option.legend = legendOption(ctx, series.map((s) => s.name), legendPos);
+  // Real time: lets the adapter run the two-step shift and map an axis value back to a data index.
+  if (rtSeq) option.__realtime = { xIndexOf: (x: number) => rtIndex.get(Math.round(x)) };
+  if (rtTime) {
+    // Time x: the axis value is a timestamp — the nearest point of the first series.
+    const xs = series[0]?.pairs.map((p) => p[0]) ?? [];
+    option.__realtime = {
+      xIndexOf: (x: number) => {
+        let best = -1, gap = Infinity;
+        xs.forEach((v, i) => { const d = Math.abs(v - x); if (d < gap) { gap = d; best = i; } });
+        return best < 0 ? undefined : best;
+      },
+    };
+  }
   if (zoom) {
     option.dataZoom = [
       { type: 'inside', xAxisIndex: 0, filterMode: 'none', zoomOnMouseWheel: 'ctrl', moveOnMouseMove: true },
@@ -536,13 +798,20 @@ function buildCartesian(ctx: Ctx): BuildResult {
         handleStyle: { color: t.tokens.textSecondary, borderColor: t.tokens.bgSurface },
         moveHandleStyle: { color: t.tokens.axisLine },
         textStyle: { color: t.tokens.textMuted },
-        labelFormatter: (_: number, s: string) => (xField?.type === 'time' ? formatTime(Number(s) || s, locale) : s),
+        labelFormatter: (v: number, s: string) => (rtSeq ? xLabels[rtIndex.get(Math.round(v)) ?? -1] ?? '' : xField?.type === 'time' ? formatTime(Number(s) || s, locale) : s),
       },
     ];
   }
+  // How long the line/area entrance runs (last line's delay + its draw time).
+  const drawn = Math.max(1, drawSlot.size);
+  const entranceMs = !isBarLike && ctx.motion.enabled
+    ? (oneByOne ? drawn * lineMs + (drawn - 1) * lineGapMs : ctx.motion.entranceMs + (drawn - 1) * SERIES_STAGGER_MS)
+    : undefined;
   return {
     option,
     warnings,
+    entranceMs,
+    ...(oneByOne ? { loop: { holdMs: DRAW_LOOP_HOLD_MS } } : {}),
     lookup: (si, di) => {
       const s = series[si];
       return s ? { row: s.rows[di], name: s.name } : undefined;
@@ -788,17 +1057,21 @@ function buildPie(ctx: Ctx): BuildResult {
       type: 'pie',
       id: 'pie',
       name: def.title ?? fieldLabel(vf),
-      radius: donut ? ['58%', '80%'] : ['0%', labelsMode === false ? '78%' : '68%'],
+      radius: donut ? ['54%', '74%'] : ['0%', labelsMode === false ? '72%' : '66%'],
       center,
-      padAngle: donut ? 1.5 : 0,
+      padAngle: 0, // seams come from the slice border: one disc, cut
       minAngle: 2,
       avoidLabelOverlap: true,
       selectedMode: selection ? 'single' : false,
       selectedOffset: 6,
-      itemStyle: { borderColor: t.tokens.bgSurface, borderWidth: 2, borderRadius: donut ? 4 : 2 },
+      // No surface-coloured border or rounding: slices touch, each datum draws its own thin seam.
+      itemStyle: { borderWidth: 0, borderRadius: 0 },
       // Slices sweep in one after another (expansion), largest first.
       animationType: 'expansion',
-      animationDelay: stagger(ctx.motion, items.length),
+      // Pies unfold slower than the other forms so the sweep reads.
+      animationDuration: Math.round(ctx.motion.entranceMs * 1.5),
+      // One continuous sweep (no per-slice delay) so the glowing leading edge (F) can ride its front.
+      animationDelay: 0,
       label: {
         show: labelsMode !== false,
         color: t.tokens.textSecondary,
@@ -808,16 +1081,23 @@ function buildPie(ctx: Ctx): BuildResult {
         formatter: (p: Opt) => (labelsMode === 'auto' && p.percent < 5 ? '' : `${Math.round(p.percent)}%`),
       },
       labelLine: { show: labelsMode !== false, lineStyle: { color: t.tokens.axisLine }, length: 8, length2: 8 },
-      emphasis: { scale: true, scaleSize: 6, focus: 'self', label: { color: t.tokens.textPrimary } },
-      blur: { itemStyle: { opacity: 0.35 } },
+      // E/G — the adapter pops the hovered slice outward and recedes the rest; native blur dims them.
+      // The hovered slice's own label gives way to the adapter's callout bubble (name · value · share),
+      // which also stands in for the tooltip so the two never cover each other.
+      emphasis: { scale: false, focus: 'self', label: { show: false }, labelLine: { show: false } },
+      ...(!donut && ctx.motion.enabled ? { tooltip: { show: false } } : {}),
+      // Identity colour per slice for the callout's accent (fills are gradients).
+      sliceColors: items.map((i) => t.palette[slotFor(ctx.slots, i.name) % t.palette.length]!),
+      blur: { itemStyle: { opacity: 0.55 } },
       data: items.map((i) => {
         const color = t.palette[slotFor(ctx.slots, i.name) % t.palette.length]!;
         return {
         name: i.name,
         value: i.value,
-        itemStyle: { color },
-        // Hover: the slice lifts out and glows in its own colour.
-        emphasis: { itemStyle: glow(t, color, 2) },
+        // Solid slice + thin dark seam; the shared light comes from the disc sheen.
+        itemStyle: { ...pieSlice(t, color), borderRadius: 0 },
+        // Hover: a little brighter with a soft glow (the adapter pops it out).
+        emphasis: { itemStyle: { ...glow(t, color, 1.2), color: alpha(shade(color, 0.12), 0.95) } },
         // Tiny slices: no label and no dangling leader line.
         ...(labelsMode === 'auto' && total > 0 && i.value / total < 0.05 ? { label: { show: false }, labelLine: { show: false } } : {}),
         };
@@ -831,6 +1111,9 @@ function buildPie(ctx: Ctx): BuildResult {
     const centerLabel = (def.options?.centerLabel ?? '합계').replace(/[{}|]/g, '');
     series.push({
       type: 'pie', id: '__center', name: '__center', radius: ['0%', '0%'], center, silent: true, tooltip: { show: false },
+      // E — while a slice is hovered the adapter swaps this readout to the slice (value counts over).
+      hoverFormatter: (name: string, pct: number) => (p: Opt) =>
+        `{v|${formatValue(p.value, vf, { locale, withUnit: false }).replace(/[{}|]/g, '')}}\n{l|${name.replace(/[{}|]/g, '')} · ${pct}%}`,
       label: {
         show: true, position: 'center',
         valueAnimation: ctx.motion.enabled,
@@ -842,29 +1125,125 @@ function buildPie(ctx: Ctx): BuildResult {
         },
       },
       labelLine: { show: false },
-      data: [{ value: total, name: '', itemStyle: { color: 'transparent' } }],
-      animationDuration: ctx.motion.entranceMs * 2,
+      data: [{ value: items.filter((i) => !ctx.hidden?.has(i.name)).reduce((s, i) => s + i.value, 0), name: '', itemStyle: { color: 'transparent' } }],
+      animationDuration: Math.round(ctx.motion.entranceMs * 1.3),
       animationDelay: 0,
       emphasis: { disabled: true },
     });
   }
+  // HUD halo + tick ring (decoration only; appended last so data series indices are unchanged).
+  const outerPct = donut ? 74 : labelsMode === false ? 72 : 66;
+  series.push(...hudRings(t, ctx.motion, center, outerPct + 3));
+  if (!t.effects.depth) {
+    const pctOfFlat = (v: string, size: number) => (parseFloat(v) / 100) * size;
+    series.push(...discSheen(t, (w, h) => {
+      const r = (outerPct / 100) * (Math.min(w, h) / 2);
+      return { cx: pctOfFlat(center[0], w), cy: pctOfFlat(center[1], h), r, r0: donut ? r * (54 / 74) : 0 };
+    }));
+  }
+  // F — glowing leading edge on the entrance sweep.
+  if (ctx.entrance && !t.effects.depth) series.push(...sweepEdge(t, ctx.motion, center, outerPct, Math.round(ctx.motion.entranceMs * 1.5)));
   if (t.effects.depth) {
-    // 3D style: a thick disk. Darkened copies of the pie are stacked a little lower to
-    // form the side wall; the real (interactive) pie sits on top. Layers share slice
-    // names, so legend toggles hide the wall together with its slice.
-    const LAYERS = 7;
-    const cy = parseFloat(center[1]);
+    // 3D style: a tilted thick disk seen from ~35° above (like Highcharts' 3D pie).
+    // A custom series draws each slice's top face squashed to an ellipse plus a layered side
+    // wall below it. The real pie stays (shrunk to nothing) as the legend's source, so legend
+    // filtering and colours keep working; the 3D series is the interactive one.
     const main = series[0]!;
-    main.z = 3;
-    for (let k = LAYERS; k >= 1; k--) {
-      series.push({
-        type: 'pie', id: `fx:depth:${k}`, name: '__depth', z: 2, silent: true, tooltip: { show: false },
-        radius: main.radius, center: [center[0], `${cy + k * 0.55}%`], padAngle: main.padAngle, minAngle: main.minAngle,
-        animationType: 'expansion', animationDelay: main.animationDelay,
-        label: { show: false }, labelLine: { show: false }, emphasis: { disabled: true },
-        itemStyle: { borderColor: t.tokens.bgSurface, borderWidth: k === LAYERS ? 2 : 0, borderRadius: main.itemStyle.borderRadius, ...(k === LAYERS ? depthShadow(t, 1.4) : {}) },
-        data: items.map((i) => ({ name: i.name, value: i.value, itemStyle: { color: shade(t.palette[slotFor(ctx.slots, i.name) % t.palette.length]!, -0.45 - k * 0.02) } })),
-      });
+    Object.assign(main, { radius: ['0%', '0%'], silent: true, tooltip: { show: false }, label: { show: false }, labelLine: { show: false }, emphasis: { disabled: true } });
+    const hud = series.findIndex((x) => x.id === 'fx:hud');
+    if (hud >= 0) series.splice(hud, 1); // flat rings would fight the tilt
+    const TILT = 0.58;
+    const shown = items.filter((i) => !ctx.hidden?.has(i.name));
+    const sum = shown.reduce((acc, i) => acc + i.value, 0) || 1;
+    const outer3d = outerPct / 100;
+    const innerPct = donut ? 0.54 : 0;
+    let acc = 0;
+    const arcs = shown.map((i) => {
+      const a0 = -Math.PI / 2 + (acc / sum) * Math.PI * 2;
+      acc += i.value;
+      return { ...i, a0, a1: -Math.PI / 2 + (acc / sum) * Math.PI * 2 };
+    });
+    const pctOf = (v: string, size: number) => (parseFloat(v) / 100) * size;
+    const delayFn = stagger(ctx.motion, arcs.length);
+    // Shared by the renderer and the adapter's hover lift (H): disk centre and slice mid-angle.
+    const geom = (dataIndex: number, w: number, h: number) => {
+      const R = Math.min(w / 2, (h / 2) / TILT) * outer3d * 0.8;
+      const D = R * 0.16;
+      const arc = arcs[dataIndex];
+      return { cx: pctOf(center[0], w), cy: pctOf(center[1], h) - D / 2, R, D, tilt: TILT, mid: arc ? (arc.a0 + arc.a1) / 2 : 0 };
+    };
+    series.push({
+      type: 'custom', id: 'pie3d', name: def.title ?? fieldLabel(vf), coordinateSystem: 'none', z: 3,
+      ...(!donut && ctx.motion.enabled ? { tooltip: { show: false } } : {}), // the callout stands in
+      sliceColors: arcs.map((i) => t.palette[slotFor(ctx.slots, i.name) % t.palette.length]!),
+      ...hoverSpring(ctx.motion),
+      // G — the other slices dim while one is hovered (the adapter also recedes and lifts, H).
+      emphasis: { focus: 'self' },
+      sliceGeom: geom,
+      data: arcs.map((i) => ({ name: i.name, value: i.value })),
+      renderItem: (params: Opt, api: Opt) => {
+        const arc = arcs[params.dataIndex];
+        if (!arc) return null;
+        const w = api.getWidth(), h = api.getHeight();
+        // Lying flat reads larger than upright, so the tilted disk is drawn ~20% smaller.
+        const { R, D, cx, cy } = geom(params.dataIndex, w, h);
+        const r0 = (R * innerPct) / Math.max(outer3d, 1e-6);
+        const color = t.palette[slotFor(ctx.slots, arc.name) % t.palette.length]!;
+        // Slices touch (no angular gap); the seam is the thin stroke below.
+        const gap = 0;
+        const shape = { cx: 0, cy: 0, r: R, r0, startAngle: arc.a0 + gap, endAngle: arc.a1 - gap, clockwise: true };
+        const delay = typeof delayFn === 'function' ? delayFn(params.dataIndex) : delayFn;
+        const enter = ctx.motion.enabled
+          ? { enterFrom: { shape: { endAngle: arc.a0 + gap } }, enterAnimation: { duration: Math.round(ctx.motion.entranceMs * 1.5), delay } }
+          : {};
+        // Cylinder-lit wall: global gradient across the disc, brightest facing the viewer.
+        const wallFill = {
+          type: 'linear', x: cx - R, y: 0, x2: cx + R, y2: 0, global: true,
+          colorStops: [{ offset: 0, color: shade(color, -0.62) }, { offset: 0.5, color: shade(color, -0.22) }, { offset: 1, color: shade(color, -0.62) }],
+        };
+        const walls = wallPolygons(arc.a0, arc.a1, cx, cy, R, TILT, D).map((points) => ({
+          type: 'polygon', z2: 10, shape: { points },
+          style: { fill: wallFill, stroke: shade(color, -0.7), lineWidth: 0.8 },
+          blur: { style: { opacity: 0.55 } },
+          ...(ctx.motion.enabled ? { enterFrom: { style: { opacity: 0 } }, enterAnimation: { duration: Math.round(ctx.motion.entranceMs * 0.6), delay: delay + Math.round(ctx.motion.entranceMs * 0.9) } } : {}),
+        }));
+        const mid = (arc.a0 + arc.a1) / 2;
+        const share = arc.value / sum;
+        const showLabel = labelsMode !== false && !(labelsMode === 'auto' && share < 0.05);
+        return {
+          type: 'group',
+          children: [
+            // Side wall: the slice's front edge as one curved band.
+            ...walls,
+            {
+              type: 'group', x: cx, y: cy, scaleY: TILT,
+              children: [{
+                type: 'sector', z2: 100, shape, ...enter,
+                // Solid top with a thin dark seam; the shared light is the disc sheen.
+                style: { fill: color, stroke: shade(color, -0.45), lineWidth: 1 },
+                emphasis: { style: { fill: shade(color, 0.12), shadowBlur: 14, shadowColor: alpha(color, 0.7) } },
+                blur: { style: { opacity: 0.55 } },
+              }],
+            },
+            ...(showLabel ? [{
+              type: 'text', z2: 101, silent: true,
+              // Hidden while hovered: the callout bubble takes its place.
+              emphasis: { style: { opacity: 0 } },
+              x: cx + Math.cos(mid) * (R + 14), y: cy + Math.sin(mid) * (R + 14) * TILT + (Math.sin(mid) > 0 ? D : 0),
+              style: { text: `${Math.round(share * 100)}%`, fill: t.tokens.textSecondary, fontSize: 11, fontFamily: t.fontFamily, align: Math.cos(mid) >= 0 ? 'left' : 'right', verticalAlign: 'middle' },
+            }] : []),
+          ],
+        };
+      },
+    });
+    series.push(...discSheen(t, (w, h) => {
+      const g = geom(0, w, h);
+      return { cx: g.cx, cy: g.cy, r: g.R, r0: (g.R * innerPct) / Math.max(outer3d, 1e-6), tilt: TILT };
+    }));
+    if (donut) {
+      // Keep the centre total on the tilted top face.
+      const c = series.find((x) => x.id === '__center');
+      if (c) c.center = [center[0], `${parseFloat(center[1]) - 2}%`];
     }
   }
   const option: Opt = {
@@ -873,11 +1252,20 @@ function buildPie(ctx: Ctx): BuildResult {
     tooltip: {
       ...tooltipBase(t, 'item'),
       show: def.interactions?.includes('tooltip') !== false,
-      formatter: (p: Opt) => (p.seriesName === '__center' ? '' : tooltipHeader(p.name) + tooltipRow(p.color, fieldLabel(vf), `${formatValue(p.value, vf, { locale })} · ${p.percent}%`)),
+      formatter: (p: Opt) => {
+        if (p.seriesName === '__center') return '';
+        const shownTotal = items.filter((i) => !ctx.hidden?.has(i.name)).reduce((acc, i) => acc + i.value, 0) || 1;
+        const pct = p.percent ?? Math.round((Number(p.value) / shownTotal) * 1000) / 10;
+        const color = p.seriesId === 'pie3d' ? t.palette[slotFor(ctx.slots, p.name) % t.palette.length]! : p.color;
+        return tooltipHeader(p.name) + tooltipRow(color, fieldLabel(vf), `${formatValue(p.value, vf, { locale })} · ${pct}%`);
+      },
     },
   };
   if (legendPos) option.legend = legendOption(ctx, items.map((i) => i.name), legendPos);
-  return { option, warnings, lookup: (si, di) => (si === 0 && items[di] ? { rows: items[di]!.rows, row: items[di]!.rows[0], name: items[di]!.name } : undefined) };
+  const pie3dIndex = series.findIndex((x) => x.id === 'pie3d');
+  const visibleItems = items.filter((i) => !ctx.hidden?.has(i.name));
+  const pick = (it?: (typeof items)[number]) => (it ? { rows: it.rows, row: it.rows[0], name: it.name } : undefined);
+  return { option, warnings, lookup: (si, di) => (si === 0 ? pick(items[di]) : si === pie3dIndex ? pick(visibleItems[di]) : undefined) };
 }
 
 // ── Gauge ─────────────────────────────────────────────────────────────────
@@ -968,19 +1356,55 @@ function buildGauge(ctx: Ctx): BuildResult {
 
 // ── Heatmap ───────────────────────────────────────────────────────────────
 
+/** Round time steps for real-time time axes (ms). */
+const TIME_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400].map((s) => s * 1000);
+
+/** Short local clock text for a time-axis tick: HH:MM, or HH:MM:SS for sub-minute steps. */
+function clockText(ms: number, step: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return step < 60_000 ? `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` : `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+const WEEKDAYS = ['월', '화', '수', '목', '금', '토', '일'];
+const HOURS = Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0'));
+
+/**
+ * Week × hour pattern: bucket rows by the local weekday / hour of their timestamp and sum the
+ * value, over a fixed full grid (hours with no data are 0, so the pattern reads at a glance).
+ */
+function weekHourRows(rows: Row[], timeField: string, valueField: string): Row[] {
+  const sums = new Map<string, number>();
+  for (const r of rows) {
+    const raw = r[timeField];
+    const ms = typeof raw === 'number' ? raw : raw instanceof Date ? raw.getTime() : typeof raw === 'string' ? Date.parse(raw) : NaN;
+    const v = r[valueField];
+    if (Number.isNaN(ms) || typeof v !== 'number') continue;
+    const d = new Date(ms);
+    const key = `${(d.getDay() + 6) % 7}|${d.getHours()}`; // Monday first
+    sums.set(key, (sums.get(key) ?? 0) + v);
+  }
+  const out: Row[] = [];
+  WEEKDAYS.forEach((day, di) => HOURS.forEach((hour, h) => out.push({ __hour: hour, __day: day, __value: sums.get(`${di}|${h}`) ?? 0 })));
+  return out;
+}
+
 function buildHeatmap(ctx: Ctx): BuildResult {
-  const { definition: def, rows, theme: t, locale } = ctx;
-  const e = def.encoding ?? {};
+  const { definition: def, theme: t, locale } = ctx;
+  const enc = def.encoding ?? {};
   const fm = fieldMap(def.data.fields);
-  const xf = fm.get(e.x!);
+  const weekHour = def.options?.pattern === 'week-hour';
+  const rows = weekHour ? weekHourRows(ctx.rows, enc.x!, enc.value!) : ctx.rows;
+  const e = weekHour ? { x: '__hour', y: '__day', value: '__value' } : enc;
+  const xf = weekHour ? ({ name: '__hour', type: 'string', label: '시' } as FieldDef) : fm.get(e.x!);
   const yName = e.y as string;
-  const yf = fm.get(yName);
-  const vf = fm.get(e.value!);
-  const show = (f: FieldDef | undefined, v: unknown) => (f?.type === 'time' ? formatTime(v, locale) : String(v));
-  const xs = distinct(rows, e.x!);
-  const ys = distinct(rows, yName);
-  const xi = new Map(xs.map((v, i) => [v, i]));
-  const yi = new Map(ys.map((v, i) => [v, i]));
+  const yf = weekHour ? ({ name: '__day', type: 'string', label: '요일' } as FieldDef) : fm.get(yName);
+  const vf = fm.get(enc.value!);
+  const show = (f: FieldDef | undefined, v: unknown) => (f?.type === 'time' ? formatTime(v, locale) : weekHour && f?.name === '__hour' ? `${v}시` : String(v));
+  const xs = weekHour ? HOURS : distinct(rows, e.x!);
+  const ys = weekHour ? WEEKDAYS : distinct(rows, yName);
+  const xi = new Map<unknown, number>(xs.map((v, i) => [v, i]));
+  const yi = new Map<unknown, number>(ys.map((v, i) => [v, i]));
   const ext = numericExtent(rows, e.value!) ?? [0, 1];
   const span = ext[1] - ext[0] || 1;
   const cellCount = xs.length * ys.length;
@@ -1131,24 +1555,45 @@ function buildRadar(ctx: Ctx): BuildResult {
     };
   });
   const max = def.options?.max ?? Math.max(100, ...rows.map(r => typeof r[e.value!] === 'number' ? r[e.value!] as number : 0));
+  const legendAt = legendPosition(def, groups.length);
+  const web = t.mode === 'light' ? t.tokens.axisLine : t.tokens.accentCyan;
+  // Spider web (Highcharts "polar-spider" form): polygon grid lines only, series drawn as
+  // lines with small points. The enclosed area appears only on hover so overlapping
+  // series stay legible over translucent dashboard panels.
   const option: Opt = {
     ...baseOption(ctx),
     radar: {
-      axisName: { color: t.tokens.textSecondary },
+      shape: 'polygon',
+      radius: legendAt === 'right' ? '72%' : '68%',
+      center: legendAt === 'right' ? ['42%', '52%'] : ['50%', legendAt === 'bottom' ? '46%' : '56%'],
+      axisName: { color: t.tokens.textSecondary, fontSize: 12 },
       indicator: categories.map(name => ({ name, max, ...(def.options?.min !== undefined ? { min: def.options.min } : {}) })),
-      axisLine: { lineStyle: { color: t.tokens.gridLine } },
-      splitLine: { lineStyle: { color: t.tokens.gridLine } },
-      splitArea: { areaStyle: { color: [t.tokens.bgHover] } },
+      // HUD web: spokes and rings in a faint accent, the outer ring brightest.
+      axisLine: { lineStyle: { color: alpha(web, 0.22) } },
+      splitLine: { lineStyle: { color: [alpha(web, 0.1), alpha(web, 0.14), alpha(web, 0.18), alpha(web, 0.22), alpha(web, 0.5)], width: 1 } },
+      splitArea: { show: false },
     },
     series: [{
       type: 'radar',
-      data: data.map((d) => ({ ...d, lineStyle: { width: 2, ...glow(t, d.itemStyle.color!) }, emphasis: { lineStyle: { width: 2.5, ...glow(t, d.itemStyle.color!, 2) } } })),
-      areaStyle: { opacity: 0.3 },
-      emphasis: { areaStyle: { opacity: 0.5 } },
+      symbol: 'circle',
+      symbolSize: 5,
+      data: data.map((d) => ({
+        ...d,
+        lineStyle: { width: 2, color: neonCore(t, d.itemStyle.color!), ...glow(t, d.itemStyle.color!) },
+        itemStyle: { ...d.itemStyle, borderColor: neonCore(t, d.itemStyle.color!, 0.6), borderWidth: 1 },
+        emphasis: { lineStyle: { width: 3, ...glow(t, d.itemStyle.color!, 2) }, areaStyle: { color: alpha(d.itemStyle.color!, 0.24) } },
+      })),
+      areaStyle: { opacity: 0 },
+      emphasis: { focus: 'self' },
       animationDelay: stagger(ctx.motion, data.length),
     }],
-    tooltip: { ...tooltipBase(t, 'item'), show: def.interactions?.includes('tooltip') !== false },
-    legend: groups.length > 1 && def.interactions?.includes('legend-toggle') ? legendOption(ctx, groups, 'top') : undefined,
+    tooltip: {
+      ...tooltipBase(t, 'item'),
+      show: def.interactions?.includes('tooltip') !== false,
+      formatter: (p: { name: string; color: string; value: (number | null)[] }) =>
+        tooltipHeader(p.name) + categories.map((cat, i) => tooltipRow(p.color, cat, formatValue(p.value[i], vf, { locale: ctx.locale }))).join(''),
+    },
+    legend: legendAt ? legendOption(ctx, groups, legendAt) : undefined,
   };
 
   return { option, warnings: [], lookup: () => undefined };
@@ -1354,6 +1799,75 @@ function buildBubble(ctx: Ctx): BuildResult {
   const minSize = Math.max(0, extent?.[0] ?? 0);
   const maxSize = Math.max(0, extent?.[1] ?? 0);
   const fm = fieldMap(def.data.fields);
+  // Packed form shrinks with the item count so the cluster fits a dashboard panel.
+  const packScale = xy ? 1 : Math.max(0.5, Math.min(1, 10 / Math.sqrt(Math.max(1, valid.length * 8))));
+  const sizeOf = (v: number) => (maxSize > minSize ? 14 + Math.sqrt((Math.max(minSize, v) - minSize) / (maxSize - minSize)) * 44 : 32) * packScale;
+  const colorOf = (i: number) => t.palette[slotFor(ctx.slots, String(categories[i])) % t.palette.length] ?? t.palette[i % t.palette.length]!;
+  if (!xy) {
+    // Packed bubbles (COD-M packedbubble): one cluster, colour = group, area = value.
+    // Deterministic circle packing in pixel space (see pack-layout.ts), fitted to the panel;
+    // one custom series per group so legend toggles keep working.
+    const hiddenGroup = (gi: number) => !!ctx.hidden?.has(String(categories[gi]));
+    // Only visible groups are packed, so the cluster re-forms when the legend filters.
+    const flat = grouped.flatMap((group, gi) => (hiddenGroup(gi) ? [] : group.map((r, di) => ({ r, gi, di }))));
+    const radii = flat.map(({ r }) => sizeOf(r[e.value!] as number) / 2);
+    const LEGEND_H = categories.length > 1 ? 30 : 0;
+    let cache = { w: -1, h: -1, circles: [] as ReturnType<typeof packCircles> };
+    const offsets = grouped.map((_, gi) => (hiddenGroup(gi) ? -1 : flat.findIndex((f) => f.gi === gi)));
+    const delayFn = stagger(ctx.motion, flat.length);
+    const series = grouped.map((group, gi) => {
+      const c = colorOf(gi);
+      const fill = t.effects.depth ? { fill: sphere(c, 0.9) } : (() => { const h = holo(t, c, 0.55); return { fill: h.color, stroke: h.borderColor, lineWidth: h.borderWidth, shadowBlur: h.shadowBlur, shadowColor: h.shadowColor }; })();
+      return {
+        type: 'custom', id: `bubble:${gi}`, name: String(categories[gi]), coordinateSystem: 'none', ...hoverSpring(ctx.motion),
+        breathe: ctx.motion.enabled,
+        data: group.map((r) => [r[e.value!]]),
+        renderItem: (params: Opt, api: Opt) => {
+          const w = api.getWidth(), h = api.getHeight() - LEGEND_H;
+          if (w !== cache.w || h !== cache.h) cache = { w, h, circles: packCircles(radii, w, h) };
+          if (offsets[gi]! < 0) return null;
+          const k = offsets[gi]! + params.dataIndex;
+          const pos = cache.circles[k];
+          if (!pos) return null;
+          const label = String(group[params.dataIndex]?.[e.label!] ?? '');
+          const showLabel = def.options?.labels !== false && pos.r >= 15;
+          const delay = typeof delayFn === 'function' ? delayFn(k) : delayFn;
+          return {
+            type: 'group', x: pos.x, y: pos.y + LEGEND_H,
+            ...(ctx.motion.enabled ? { enterFrom: { scaleX: 0, scaleY: 0, style: { opacity: 0 } }, enterAnimation: { duration: ctx.motion.entranceMs, delay } } : {}),
+            children: [{
+              type: 'circle', shape: { cx: 0, cy: 0, r: pos.r }, style: fill,
+              // Hover: glow; the adapter swells it and sets the whole cluster drifting (label rides along).
+              emphasis: swell(t, c),
+              ...(showLabel ? {
+                textContent: { style: { text: label, fill: t.tokens.textPrimary, fontSize: Math.max(9, Math.min(12, pos.r / 2.6)), fontFamily: t.fontFamily, width: pos.r * 1.8, overflow: 'truncate' } },
+                textConfig: { position: 'inside' },
+              } : {}),
+            }],
+          };
+        },
+      };
+    });
+    const option: Opt = {
+      ...baseOption(ctx),
+      legend: categories.length > 1 ? legendOption(ctx, categories.map(String), 'top') : undefined,
+      series,
+      tooltip: {
+        ...tooltipBase(t, 'item'), show: def.interactions?.includes('tooltip') !== false,
+        formatter: (p: Opt) => {
+          const row = grouped[p.seriesIndex]?.[p.dataIndex];
+          if (!row) return '';
+          return tooltipHeader(String(row[e.label!])) +
+            tooltipRow(colorOf(p.seriesIndex), String(categories[p.seriesIndex]), formatValue(row[e.value!], fm.get(e.value!), { locale }));
+        },
+      },
+    };
+    return {
+      option,
+      warnings: valid.length < rows.length ? ['값이 올바르지 않은 버블 항목을 제외했습니다.'] : [],
+      lookup: (si, di) => ({ row: grouped[si]?.[di] }),
+    };
+  }
   const series = grouped.map((group, i) => ({
     type: 'scatter', name: String(categories[i]), id: `bubble:${i}`,
     data: group.map(r => ({ name: String(r[e.label!] ?? ''), value: [xy ? r[e.x!] : categories[i], xy ? r[yField!] : r[e.value!], r[e.value!]] })),
@@ -1391,19 +1905,25 @@ function buildGaugeGroup(ctx: Ctx): BuildResult {
   const { definition: def, rows, theme: t, locale } = ctx;
   const e = def.encoding!;
   const valid = rows.filter(r => typeof r[e.value!] === 'number');
+  const shown = valid.filter(r => !ctx.hidden?.has(String(r[e.label!] ?? '')));
+  const ringColor = (name: string) => t.palette[slotFor(ctx.slots, name) % t.palette.length]!;
   const min = def.options?.min ?? 0;
   const max = def.options?.max ?? 100;
   const span = max - min;
-  const step = Math.min(9, 50 / Math.max(valid.length, 1));
+  // Rings re-pack over the visible items when the legend filters some out.
+  const step = Math.min(9, 50 / Math.max(shown.length, 1));
   const vf = fieldMap(def.data.fields).get(e.value!);
   const series = valid.map((row, i) => {
     const name = String(row[e.label!] ?? '');
     const value = row[e.value!] as number;
     const progress = Math.max(0, Math.min(span, value - min));
-    const outer = 80 - i * step;
+    const vi = shown.indexOf(row);
+    // Hidden items keep a zero-size ring so the legend can switch them back on.
+    const outer = vi < 0 ? 0 : 80 - vi * step;
+    const color = ringColor(name);
     return {
       type: 'pie', id: `gauge:${i}`, name, center: ['50%', '45%'],
-      radius: [`${outer - step * 0.8}%`, `${outer}%`],
+      radius: vi < 0 ? ['0%', '0%'] : [`${outer - step * 0.8}%`, `${outer}%`],
       startAngle: 90, clockwise: true, avoidLabelOverlap: false,
       label: { show: false }, labelLine: { show: false },
       emphasis: { scale: false },
@@ -1413,12 +1933,12 @@ function buildGaugeGroup(ctx: Ctx): BuildResult {
       animationEasing: 'cubicOut',
       animationDurationUpdate: ctx.motion.sweepUpdateMs,
       animationEasingUpdate: 'cubicInOut',
-      animationDelay: ctx.motion.enabled ? i * 120 : 0,
+      animationDelay: ctx.motion.enabled ? Math.max(0, vi) * 120 : 0,
       data: [
         {
           name, value: progress,
-          itemStyle: { color: t.palette[i % t.palette.length], borderRadius: step >= 4 ? 4 : 0, ...glow(t, t.palette[i % t.palette.length]!) },
-          emphasis: { itemStyle: glow(t, t.palette[i % t.palette.length]!, 2) },
+          itemStyle: { color, borderRadius: step >= 4 ? 4 : 0, ...glow(t, color) },
+          emphasis: { itemStyle: glow(t, color, 2) },
         },
         { name: '', value: span - progress, itemStyle: { color: t.tokens.bgHover }, tooltip: { show: false } },
       ],
@@ -1426,13 +1946,13 @@ function buildGaugeGroup(ctx: Ctx): BuildResult {
   });
   return {
     option: { ...baseOption(ctx), series,
-      legend: { ...legendOption(ctx, valid.map(r => String(r[e.label!] ?? '')), 'bottom'), selectedMode: false },
+      legend: legendOption(ctx, valid.map(r => String(r[e.label!] ?? '')), 'bottom'),
       tooltip: {
       ...tooltipBase(t, 'item'), show: def.interactions?.includes('tooltip') !== false,
       formatter: (p: Opt) => {
         const row = valid[p.seriesIndex];
         return row && p.dataIndex === 0
-          ? tooltipHeader(String(row[e.label!] ?? '')) + tooltipRow(t.palette[p.seriesIndex % t.palette.length]!, fieldLabel(vf, e.value!), formatValue(row[e.value!], vf, { locale }))
+          ? tooltipHeader(String(row[e.label!] ?? '')) + tooltipRow(ringColor(String(row[e.label!] ?? '')), fieldLabel(vf, e.value!), formatValue(row[e.value!], vf, { locale }))
           : '';
       },
     } },
@@ -1482,8 +2002,28 @@ function buildPolarPie(ctx: Ctx): BuildResult {
     }
   }
   const nodeRows = new Map([...rowById].map(([id, row]) => [id, [row]]));
+  // Colour by branch: a single root becomes a dark HUD hub and each of its children takes a
+  // palette slot; descendants keep their branch hue, lighter per level (holographic rims).
+  type Styled = Node & { itemStyle?: Opt; label?: Opt; children: Styled[] };
+  const hubbed = roots.length === 1 && roots[0]!.children.length > 0;
+  const paint = (node: Styled, color: string, depth: number): Opt => ({
+    ...node,
+    itemStyle: { ...holo(t, shade(color, Math.min(0.45, depth * 0.16)), 0.7 - depth * 0.06), borderRadius: 3 },
+    children: node.children.map((c) => paint(c as Styled, color, depth + 1)),
+  });
+  const branches = hubbed ? roots[0]!.children : roots;
+  const painted = branches.map((n, i) => paint(n as Styled, t.palette[slotFor(ctx.slots, n.name) % t.palette.length] ?? t.palette[i % t.palette.length]!, 0));
+  const data = hubbed
+    ? [{ ...roots[0]!, children: painted, itemStyle: { color: alpha(t.tokens.accentCyan, t.mode === 'light' ? 0.12 : 0.1), borderColor: alpha(t.tokens.accentCyan, 0.7), borderWidth: 1.5, ...glow(t, t.tokens.accentCyan, 0.8) }, label: { color: t.tokens.textPrimary, fontWeight: 700, rotate: 0 } }]
+    : painted;
   return {
-    option: { ...baseOption(ctx), series: [{ type: 'sunburst', data: roots, radius: [0, '90%'], itemStyle: { borderWidth: 2, borderColor: t.tokens.bgSurface }, label: { color: t.tokens.textPrimary, rotate: 'radial' } }], tooltip: {
+    option: { ...baseOption(ctx), series: [{
+      type: 'sunburst', data, radius: [0, '86%'], sort: undefined,
+      itemStyle: { borderWidth: 2, borderColor: t.tokens.bgSurface },
+      label: { color: t.tokens.textPrimary, rotate: 'radial', fontSize: 11, minAngle: 10 },
+      emphasis: { focus: 'ancestor', itemStyle: { shadowBlur: 18 } },
+      animationType: 'expansion', animationDuration: ctx.motion.entranceMs,
+    }, ...hudRings(t, ctx.motion, ['50%', '50%'], 86)], tooltip: {
       ...tooltipBase(t, 'item'), show: def.interactions?.includes('tooltip') !== false,
       formatter: (p: Opt) => tooltipHeader(String(p.name)) + tooltipRow(p.color, fieldLabel(fieldMap(def.data.fields).get(e.value!), e.value!), formatValue(p.value, fieldMap(def.data.fields).get(e.value!), { locale })),
     } },
@@ -1500,30 +2040,40 @@ function buildWordCloud(ctx: Ctx): BuildResult {
     : eligible;
   const layoutInput = words.map(r => ({ text: String(r[e.category!]), weight: r[e.value!] as number }));
   let cached = { width: -1, height: -1, positions: [] as ReturnType<typeof layoutWords> };
+  // Colour by weight tier (not a rainbow): hottest words lit cyan with a bloom, then two cool
+  // accents, the long tail recedes into secondary ink.
+  const maxW = Math.max(1, ...layoutInput.map(w => w.weight));
+  const wordTier = (i: number) => { const r = (layoutInput[i]?.weight ?? 0) / maxW; return r >= 0.8 ? 0 : r >= 0.6 ? 1 : r >= 0.42 ? 2 : 3; };
+  const tierColor = [neonCore(t, t.palette[0]!, 0.3), t.palette[3]!, t.palette[1]!, alpha(t.tokens.textSecondary, 0.78)];
+  const wordFill = (i: number) => tierColor[wordTier(i)]!;
   const delayFn = stagger(ctx.motion, words.length);
   const wordDelay = (i: number) => (typeof delayFn === 'function' ? delayFn(i) : delayFn);
   const series = [{
-    type: 'custom', coordinateSystem: 'none',
+    type: 'custom', id: 'word-cloud', coordinateSystem: 'none', ...hoverSpring(ctx.motion),
+    breathe: ctx.motion.enabled,
     data: words.map(r => [r[e.category!], r[e.value!]]),
     renderItem: (params: Opt, api: Opt) => {
       const width = api.getWidth(), height = api.getHeight();
       if (width !== cached.width || height !== cached.height) cached = { width, height, positions: layoutWords(layoutInput, width, height) };
       const pos = cached.positions[params.dataIndex];
       if (!pos) return null;
-      const fill = t.palette[params.dataIndex % t.palette.length]!;
-      return {
-        type: 'text', x: pos.x, y: pos.y, rotation: pos.rotate ? Math.PI / 2 : 0,
-        style: { x: 0, y: 0, text: String(words[params.dataIndex]?.[e.category!] ?? ''), fontSize: pos.fontSize, fontFamily: t.fontFamily, fill, align: 'center', verticalAlign: 'middle', ...(t.effects.depth ? { textShadowColor: 'rgba(0, 0, 0, 0.6)', textShadowBlur: 4, textShadowOffsetX: 1, textShadowOffsetY: 3 } : {}) },
+      const fill = wordFill(params.dataIndex);
+      const hot = wordTier(params.dataIndex) === 0;
+      const word = {
+        type: 'text', x: 0, y: 0, rotation: pos.rotate ? Math.PI / 2 : 0,
+        style: { x: 0, y: 0, text: String(words[params.dataIndex]?.[e.category!] ?? ''), fontSize: pos.fontSize, fontFamily: t.fontFamily, fill, align: 'center', verticalAlign: 'middle', fontWeight: hot ? 700 : 500, ...(hot && t.effects.glow && t.mode === 'dark' ? { textShadowColor: alpha(t.palette[0]!, 0.85), textShadowBlur: 12 } : {}), ...(t.effects.depth ? { textShadowColor: 'rgba(0, 0, 0, 0.6)', textShadowBlur: 4, textShadowOffsetX: 1, textShadowOffsetY: 3 } : {}) },
         // Words pop in one after another.
         ...(ctx.motion.enabled
           ? { enterFrom: { style: { opacity: 0 }, scaleX: 0.6, scaleY: 0.6 }, enterAnimation: { duration: ctx.motion.entranceMs, delay: wordDelay(params.dataIndex) } }
           : {}),
-        emphasis: { style: { fill, ...(t.effects.glow ? { shadowBlur: 12, shadowColor: alpha(fill, 0.7) } : {}) } },
+        // Hover: lit in its own colour; the adapter swells it and sets the whole cloud drifting.
+        emphasis: { z2: 10, style: { fill: neonCore(t, fill, 0.35), ...(t.effects.glow ? { textShadowBlur: t.mode === 'light' ? 6 : 16, textShadowColor: alpha(fill, 0.9) } : {}) } },
       };
+      return { type: 'group', x: pos.x, y: pos.y, children: [word] };
     },
   }];
   return {
-    option: { ...baseOption(ctx), series, tooltip: { ...tooltipBase(t, 'item'), show: def.interactions?.includes('tooltip') !== false, formatter: (p: Opt) => tooltipHeader(String(p.value[0])) + tooltipRow(t.palette[p.dataIndex % t.palette.length]!, '가중치', formatValue(p.value[1], undefined, { locale })) } },
+    option: { ...baseOption(ctx), series, tooltip: { ...tooltipBase(t, 'item'), show: def.interactions?.includes('tooltip') !== false, formatter: (p: Opt) => tooltipHeader(String(p.value[0])) + tooltipRow(wordFill(p.dataIndex), '가중치', formatValue(p.value[1], undefined, { locale })) } },
     warnings: [
       ...(eligible.length < rows.length ? ['가중치가 0 이하이거나 단어가 없는 행은 제외했습니다.'] : []),
       ...(words.length < eligible.length ? ['워드 클라우드는 가중치가 높은 100개 단어만 표시합니다. 데이터 표도 행 수 제한이 적용됩니다.'] : []),
@@ -1534,8 +2084,12 @@ function buildWordCloud(ctx: Ctx): BuildResult {
 
 // ── Entry ─────────────────────────────────────────────────────────────────
 
-export function buildOption(ctx: RenderContext & { slots?: SlotMap }): BuildResult {
-  const c: Ctx = { ...ctx, slots: ctx.slots ?? new Map() };
+/** Forms that place every colour side by side in one shape use the cool radial palette. */
+const RADIAL_TYPES = new Set(['pie', 'donut', 'polar-pie', 'radar', 'gauge-group', 'bubble', 'word-cloud', 'sunburst', 'funnel']);
+
+export function buildOption(ctx: RenderContext & { slots?: SlotMap; entrance?: boolean; xSeq?: XSeqMap }): BuildResult {
+  const theme = RADIAL_TYPES.has(ctx.definition.type) ? { ...ctx.theme, palette: ctx.theme.radial } : ctx.theme;
+  const c: Ctx = { ...ctx, theme, slots: ctx.slots ?? new Map() };
   let result: BuildResult;
   switch (ctx.definition.type) {
     case 'line': case 'area': case 'bar': case 'stacked-bar': case 'column':
@@ -1559,6 +2113,16 @@ export function buildOption(ctx: RenderContext & { slots?: SlotMap }): BuildResu
       throw new Error(`ECharts adapter cannot render '${ctx.definition.type}'`);
   }
   if (c.theme.effects.depth) applyDepth(result.option, c.theme);
+  // On-chart hover value (count-up next to the hovered mark) uses the chart's value field format.
+  {
+    const e = ctx.definition.encoding ?? {};
+    const name = e.value ?? (typeof e.y === 'string' ? e.y : Array.isArray(e.y) ? e.y[0] : undefined);
+    const field = name ? fieldMap(ctx.definition.data.fields).get(name) : undefined;
+    result.option.__valueFormat = (v: number) => formatValue(v, field, { locale: ctx.locale });
+  }
+  // Auto-tour for wall displays (the adapter runs it).
+  const tour = ctx.definition.options?.autoTour;
+  if (tour) result.option.__tour = { intervalMs: (typeof tour === 'object' ? tour.intervalMs : undefined) ?? AUTO_TOUR_MS };
   const extra = ctx.definition.engineOptions?.echarts;
   if (extra && Object.keys(extra).length) result.option = mergeEngineOptions(result.option, extra);
   return result;
@@ -1584,7 +2148,8 @@ function applyDepth(option: Opt, t: ResolvedTheme): void {
         s.itemStyle = raise(s.itemStyle, 0.5);
         break;
       case 'radar':
-        s.areaStyle = raise(s.areaStyle, 0.8);
+        // The spider has no resting fill; give it a faint plate so the raised shadow has a body.
+        s.areaStyle = raise({ ...s.areaStyle, opacity: Math.max(s.areaStyle?.opacity ?? 0, 0.16) }, 0.8);
         break;
       case 'gauge':
         if (s.progress?.show) s.progress.itemStyle = raise(s.progress.itemStyle, 0.8);

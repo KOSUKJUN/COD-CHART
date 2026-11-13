@@ -59,6 +59,30 @@
 .cv-live { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--cv-text-muted); margin-right: 4px; }
 .cv-live__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--cv-accent-cyan); animation: cv-pulse 1.2s ease-in-out infinite; }
 
+/* Live data delay: a calm amber note, never an error (the last data stays on screen). */
+.cv-stale {
+  display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; margin-right: 4px;
+  border-radius: 999px; font-size: 11px; font-weight: 500; color: var(--cv-warning);
+  background: color-mix(in srgb, var(--cv-warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cv-warning) 35%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.cv-stale__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--cv-warning); }
+.cv-chart--stale .cv-chart__canvas { filter: saturate(0.55); transition: filter 0.6s var(--cv-ease); }
+
+/* Panel alarm: the frame takes the status colour; critical breathes so it reads across a wall. */
+.cv-alarm-badge { margin-right: 4px; }
+.cv-chart--alarm.cv-chart--framed {
+  border-color: color-mix(in srgb, var(--cv-s) 70%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--cv-s) 35%, transparent), 0 0 18px color-mix(in srgb, var(--cv-s) 22%, transparent), 0 12px 32px rgb(0 0 0 / 24%);
+}
+.cv-chart--alarm-warning { --cv-s: var(--cv-warning); }
+.cv-chart--alarm-critical { --cv-s: var(--cv-danger); }
+.cv-chart--alarm-critical.cv-chart--framed { animation: cv-alarm 1.6s ease-in-out infinite; }
+@keyframes cv-alarm {
+  50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--cv-s) 60%, transparent), 0 0 30px color-mix(in srgb, var(--cv-s) 45%, transparent), 0 12px 32px rgb(0 0 0 / 24%); }
+}
+
 /* ── Status (never colour alone: badges always carry icon + label) ── */
 .cv-status--ok { --cv-s: var(--cv-success); }
 .cv-status--info { --cv-s: var(--cv-info); }
@@ -102,6 +126,14 @@
 
 .cv-fade-enter-active, .cv-fade-leave-active { transition: opacity 0.2s var(--cv-ease); }
 .cv-fade-enter-from, .cv-fade-leave-to { opacity: 0; }
+/*
+ * Loading skeleton: reveal only when loading is actually slow (> 400ms), so static or fast data
+ * never flashes placeholder bars before the chart. On ready it leaves at once instead of fading
+ * over the chart's own entrance animation.
+ */
+.cv-overlay--loading { opacity: 0; transition: opacity 0.25s var(--cv-ease); }
+.cv-overlay--loading.is-revealed { opacity: 1; }
+.cv-overlay--loading.cv-fade-enter-active, .cv-overlay--loading.cv-fade-leave-active { transition: none; }
 
 /* ── KPI ─────────────────────────────────────────────── */
 .cv-kpi {
@@ -173,6 +205,33 @@
 .cv-level--warning { --cv-s: var(--cv-warning); }
 .cv-level--info { --cv-s: var(--cv-info); }
 .cv-level--ok { --cv-s: var(--cv-success); }
+/* ── Device status tiles ── OK tiles stay quiet so the few problems stand out. */
+.cv-grid { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; }
+.cv-grid__tiles {
+  flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0; padding: 2px; list-style: none;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--cv-tile, 18px), 1fr)); gap: 4px; align-content: start;
+}
+.cv-grid__tile {
+  display: block; width: 100%; aspect-ratio: 1; padding: 0; border-radius: 3px; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--cv-s) 55%, transparent);
+  background: color-mix(in srgb, var(--cv-s) 22%, transparent);
+  transition: opacity 0.2s var(--cv-ease), transform 0.15s var(--cv-ease), box-shadow 0.2s var(--cv-ease);
+}
+.cv-grid__tile.cv-level--ok { background: color-mix(in srgb, var(--cv-s) 12%, transparent); border-color: color-mix(in srgb, var(--cv-s) 30%, transparent); }
+.cv-grid__tile.cv-level--warning { background: color-mix(in srgb, var(--cv-s) 55%, transparent); }
+.cv-grid__tile.cv-level--critical {
+  background: var(--cv-s); border-color: var(--cv-s);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--cv-s) 60%, transparent);
+  animation: cv-tile-alarm 1.4s ease-in-out infinite;
+}
+.cv-grid__tile:hover, .cv-grid__tile:focus-visible { transform: scale(1.25); z-index: 1; position: relative; box-shadow: 0 0 0 2px var(--cv-focus); }
+.cv-grid__tile.is-selected { box-shadow: 0 0 0 2px var(--cv-text-primary); }
+.cv-grid__tile.is-dim { opacity: 0.15; }
+.cv-grid__detail { margin: 0; min-height: 18px; font-size: 12px; color: var(--cv-text-secondary); display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cv-grid__detail strong { color: var(--cv-text-primary); font-weight: 600; }
+.cv-grid__swatch { width: 10px; height: 10px; border-radius: 2px; background: var(--cv-s); flex-shrink: 0; }
+@keyframes cv-tile-alarm { 50% { box-shadow: 0 0 14px color-mix(in srgb, var(--cv-s) 85%, transparent); } }
+
 .cv-status__item:hover { background: var(--cv-bg-hover); }
 .cv-status__item.is-selected { background: var(--cv-bg-hover); border-color: var(--cv-axis-line); }
 .cv-status__text { display: flex; flex-direction: column; min-width: 0; }

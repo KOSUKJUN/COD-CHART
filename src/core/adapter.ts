@@ -10,6 +10,10 @@ export interface RenderContext {
   locale: string;
   /** Plain-language summary for aria-label. */
   summary: string;
+  /** Legend items the viewer switched off. Builders drop them from layouts and totals. */
+  hidden?: ReadonlySet<string>;
+  /** Live data is late (see ChartState.stale): live markers are drawn greyed and still. */
+  stale?: boolean;
 }
 
 export type AdapterEvent = Omit<ChartEventPayload, 'chartId'>;

@@ -28,9 +28,10 @@ export function layoutWords(words: WordLayoutInput[], width: number, height: num
     const positions: (WordPosition | undefined)[] = new Array(words.length);
     const boxes: { left: number; top: number; right: number; bottom: number }[] = [];
     let complete = true;
-    for (const [rank, word] of sorted.entries()) {
+    for (const word of sorted) {
       const fontSize = (12 + 30 * Math.sqrt(word.weight / maxWeight)) * scale;
-      const rotate = rank % 5 === 3;
+      // Horizontal only: rotated Hangul reads poorly and breaks the clean HUD look.
+      const rotate = false;
       const textW = textWidth(word.text, fontSize);
       const textH = fontSize * 1.3;
       const w = (rotate ? textH : textW) + padding * 2;

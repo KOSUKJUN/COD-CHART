@@ -169,3 +169,79 @@ describe('3D style and animation replay (real ECharts pipeline)', () => {
     expect(() => h.replayAnimation()).not.toThrow();
   });
 });
+
+describe('line/area entrance vs. data updates', () => {
+  const fiveLines = (values: number[][]) => ({
+    schemaVersion: '1.0.0', id: 'entrance-hold', type: 'line', renderer: 'svg',
+    contentsData: { timesArr: ['a', 'b', 'c'], data: values.map((v, si) => ({ key: `S${si}`, values: v.map((y, x) => ({ x, y })) })) },
+    options: { drawOrder: 'one-by-one', realtime: true },
+  });
+  const firstValues = (el: HTMLElement) =>
+    ((echarts.getInstanceByDom(el)!.getOption() as { series: { id: string; data: { value: [number, number] }[] }[] }).series.find((s) => s.id === 's:S0')!.data.map((d) => d.value[1]));
+
+  // Chart renders are coalesced per animation frame (real rAF in jsdom, not faked here).
+  const frame = () => new Promise<void>((r) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(() => r()) : setTimeout(r, 16)));
+
+  it('holds a data update that arrives mid-entrance until the lines have drawn, then applies the newest', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    try {
+      const el = container();
+      const h = createChart(el, fiveLines([[1, 2, 3], [4, 5, 6], [7, 8, 9]]), { reducedMotion: false });
+      handles.push(h);
+      await frame();
+      await vi.advanceTimersByTimeAsync(30);
+      expect(firstValues(el)).toEqual([1, 2, 3]);
+      // Two updates during the ~7.4 s one-by-one entrance (3 lines × 1.8 s + 2 × 1 s pause): neither may interrupt it…
+      h.update(fiveLines([[10, 20, 30], [4, 5, 6], [7, 8, 9]]));
+      await frame();
+      await vi.advanceTimersByTimeAsync(500);
+      h.update(fiveLines([[11, 21, 31], [4, 5, 6], [7, 8, 9]]));
+      await frame();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(firstValues(el)).toEqual([1, 2, 3]);
+      // …and once it has ended, only the newest is applied.
+      await vi.advanceTimersByTimeAsync(7000);
+      expect(firstValues(el)).toEqual([11, 21, 31]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('real-time shift', () => {
+  const feed = (times: string[], values: number[]) => ({
+    schemaVersion: '1.0.0', id: 'rt-shift', type: 'line', renderer: 'svg',
+    contentsData: { timesArr: times, data: [{ key: 'A', values: values.map((y, x) => ({ x, y })) }] },
+    options: { realtime: true },
+  });
+  const frame = () => new Promise<void>((r) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(() => r()) : setTimeout(r, 16)));
+  const points = (el: HTMLElement) =>
+    ((echarts.getInstanceByDom(el)!.getOption() as { series: { id: string; data: { name: string; value: [number, number] }[] }[] }).series.find((s) => s.id === 's:A')!.data);
+
+  it('scrolls like Highcharts addPoint(shift): the leaving point stays until it has scrolled out', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    try {
+      const el = container();
+      const h = createChart(el, feed(['a', 'b', 'c'], [1, 2, 3]), { reducedMotion: false });
+      handles.push(h);
+      await frame();
+      await vi.advanceTimersByTimeAsync(4000); // past the entrance
+      const axis = () => (echarts.getInstanceByDom(el)!.getOption() as { xAxis: { min: number; max: number }[] }).xAxis[0]!;
+      const before = axis();
+      h.update(feed(['b', 'c', 'd'], [2, 3, 9]));
+      await frame();
+      // While scrolling: 'a' is still there (sliding out on the left), 'd' already there (sliding
+      // in on the right), and the x window has moved one step.
+      expect(points(el).map((d) => d.name)).toEqual(['a', 'b', 'c', 'd']);
+      expect(axis()).toMatchObject({ min: before.min + 1, max: before.max + 1 });
+      // After the scroll: the point outside the window is dropped.
+      await vi.advanceTimersByTimeAsync(600);
+      const after = points(el);
+      expect(after.map((d) => d.name)).toEqual(['b', 'c', 'd']);
+      expect(after[2]!.value[1]).toBe(9);
+      expect(after[2]!.value[0]).toBe(after[1]!.value[0] + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

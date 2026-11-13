@@ -1,7 +1,7 @@
 import { CapabilityError, getDescriptor, resolveEngine, type EncodingChannel } from './registry';
 import { ContentsDataError, convertContentsData } from './contents';
 import { isPlainObject, sanitizeEngineOptions } from './sanitize';
-import { isSafeColor, PREMIUM_DARK_BLUE_TOKENS } from './theme';
+import { isSafeColor, CYBER_NEON_TOKENS } from './theme';
 import {
   SCHEMA_VERSION,
   type AnimationPreset, type ChartDefinition, type ChartEventName, type FieldType, type InteractionName,
@@ -188,7 +188,10 @@ export function validateChartDefinition(input: unknown): ValidationResult {
   if (descriptor.type === 'bubble' && Array.isArray(encoding.y)) {
     err('encoding.y', 'type', '버블 차트의 y는 단일 숫자 필드여야 합니다.');
   }
+  // Heatmap week × hour pattern: y (weekday) is derived from the x timestamp.
+  const weekHour = descriptor.type === 'heatmap' && isPlainObject(raw.options) && (raw.options as Record<string, unknown>).pattern === 'week-hour';
   for (const ch of descriptor.required) {
+    if (weekHour && ch === 'y') continue;
     const v = encoding[ch];
     if (v === undefined || (Array.isArray(v) && v.length === 0)) err(`encoding.${ch}`, 'required', `'${descriptor.type}' 유형에는 encoding.${ch}가 필요합니다.`);
   }
@@ -269,9 +272,10 @@ export function validateChartDefinition(input: unknown): ValidationResult {
   if (isPlainObject(raw.theme)) {
     const t = raw.theme;
     if (isPlainObject(t.overrides)) for (const [k, v] of Object.entries(t.overrides)) {
-      if (!(k in PREMIUM_DARK_BLUE_TOKENS)) err(`theme.overrides.${k}`, 'unknown-token', `알 수 없는 테마 토큰입니다: ${k}`);
+      if (!(k in CYBER_NEON_TOKENS)) err(`theme.overrides.${k}`, 'unknown-token', `알 수 없는 테마 토큰입니다: ${k}`);
       else if (!isSafeColor(v)) err(`theme.overrides.${k}`, 'color', '색상은 #hex 또는 rgb()/rgba() 리터럴이어야 합니다.');
     }
+    if (t.mode !== undefined && t.mode !== 'dark' && t.mode !== 'light') err('theme.mode', 'enum', "theme.mode는 'dark' 또는 'light'여야 합니다.");
     if (t.palette !== undefined && (!Array.isArray(t.palette) || !t.palette.every(isSafeColor) || t.palette.length > 12)) {
       err('theme.palette', 'color', 'palette는 12개 이하의 색상 리터럴 배열이어야 합니다.');
     }
@@ -310,6 +314,31 @@ export function validateChartDefinition(input: unknown): ValidationResult {
     if (o.orientation !== undefined && !['vertical', 'horizontal'].includes(o.orientation as string)) err('options.orientation', 'enum', 'orientation은 vertical | horizontal 이어야 합니다.');
     if (o.pageSize !== undefined && !(typeof o.pageSize === 'number' && o.pageSize >= 1 && o.pageSize <= 500)) err('options.pageSize', 'range', 'pageSize는 1–500 사이여야 합니다.');
     if (o.content !== undefined && typeof o.content !== 'string') err('options.content', 'type', 'content는 문자열이어야 합니다.');
+    if (o.zoom !== undefined && typeof o.zoom !== 'boolean') err('options.zoom', 'type', 'zoom은 불리언이어야 합니다.');
+    if (o.realtime !== undefined && typeof o.realtime !== 'boolean') {
+      const ws = isPlainObject(o.realtime) ? (o.realtime as Record<string, unknown>).windowSize : null;
+      if (!isPlainObject(o.realtime) || (ws !== undefined && !(typeof ws === 'number' && Number.isInteger(ws) && ws >= 2 && ws <= 100_000))) {
+        err('options.realtime', 'type', 'realtime은 불리언 또는 { windowSize: 2–100,000 정수 } 이어야 합니다.');
+      }
+    }
+    if (o.drawOrder !== undefined && !['together', 'one-by-one'].includes(o.drawOrder as string)) err('options.drawOrder', 'enum', 'drawOrder는 together | one-by-one 이어야 합니다.');
+    if (o.staleAfterMs !== undefined && o.staleAfterMs !== false && !(typeof o.staleAfterMs === 'number' && o.staleAfterMs >= 1000 && o.staleAfterMs <= 86_400_000)) {
+      err('options.staleAfterMs', 'range', 'staleAfterMs는 1,000–86,400,000 사이의 숫자 또는 false 이어야 합니다.');
+    }
+    if (o.alarm !== undefined && typeof o.alarm !== 'boolean') err('options.alarm', 'type', 'alarm은 불리언이어야 합니다.');
+    if (o.pattern !== undefined && o.pattern !== 'week-hour') err('options.pattern', 'enum', "pattern은 'week-hour' 이어야 합니다.");
+    if (o.ranking !== undefined && typeof o.ranking !== 'boolean') {
+      const top = isPlainObject(o.ranking) ? (o.ranking as Record<string, unknown>).top : null;
+      if (!isPlainObject(o.ranking) || (top !== undefined && !(typeof top === 'number' && Number.isInteger(top) && top >= 1 && top <= 50))) {
+        err('options.ranking', 'type', 'ranking은 불리언 또는 { top: 1–50 정수 } 이어야 합니다.');
+      }
+    }
+    if (o.autoTour !== undefined && typeof o.autoTour !== 'boolean') {
+      const ms = isPlainObject(o.autoTour) ? (o.autoTour as Record<string, unknown>).intervalMs : null;
+      if (!isPlainObject(o.autoTour) || (ms !== undefined && !(typeof ms === 'number' && ms >= 1000 && ms <= 600_000))) {
+        err('options.autoTour', 'type', 'autoTour는 불리언 또는 { intervalMs: 1,000–600,000 } 이어야 합니다.');
+      }
+    }
   }
 
   // native escape hatch

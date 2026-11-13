@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CYBER_NEON_PALETTE } from '../../src/core/theme';
 import { validateChartDefinition } from '../../src/core/schema';
 import { contentsDefinitions } from '../../playground/contents-fixtures';
 
@@ -18,10 +19,18 @@ describe('COD-PRO Contents Data', () => {
     const definitions = types.map(id => validateChartDefinition(byId(id)).definition!);
     for (const def of definitions) {
       expect(def.encoding).toEqual({ x: 'category', y: 'value', color: 'series' });
-      expect(def.data.rows).toHaveLength(10);
+      expect(def.data.rows).toHaveLength(40); // 5 series × 8 buckets
       expect(def.data.rows?.[0]).toEqual({ category: '17:00', series: 'INBOUND BPS', value: 142 });
-      expect(def.theme?.palette).toEqual(['#4D8DFF', '#36D6F5']);
+      expect(def.theme?.palette).toBeUndefined(); // no series colours → theme palette
     }
+  });
+
+  it('series colours from the payload (COD-M data_color) become the palette', () => {
+    const line = byId('contents-line');
+    if (line.type !== 'line') throw new Error('fixture');
+    const colored = { ...line, contentsData: { ...line.contentsData, data: line.contentsData.data.map((s, i) => ({ ...s, color: ['#4D8DFF', '#36D6F5'][i] })) } };
+    // Coloured series keep their colour; uncoloured ones fall back to the theme slot for their position.
+    expect(validateChartDefinition(colored).definition!.theme?.palette).toEqual(['#4D8DFF', '#36D6F5', CYBER_NEON_PALETTE[2], CYBER_NEON_PALETTE[3], CYBER_NEON_PALETTE[4]]);
   });
 
   it('maps all gauge entries instead of just the final one', () => {

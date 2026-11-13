@@ -10,7 +10,7 @@ describe('word cloud layout', () => {
     const positions = layoutWords(words, width, height);
     expect(positions).toHaveLength(words.length);
     expect(positions.every(Boolean)).toBe(true);
-    expect(positions.some(p => p?.rotate)).toBe(true);
+    expect(positions.every(p => !p?.rotate)).toBe(true); // horizontal only
     for (const [i, p] of positions.entries()) {
       expect(p!.x - p!.width / 2).toBeGreaterThanOrEqual(0);
       expect(p!.x + p!.width / 2).toBeLessThanOrEqual(width);

@@ -30,7 +30,7 @@ const cpu = (values: number[], type = 'line', extra: Opt = {}) => ({
 describe('motion spec', () => {
   it('defines a sequential stagger, a slower gauge sweep and a live flag', () => {
     const m = resolveMotion({});
-    expect(m).toMatchObject({ staggerMs: 40, sweepMs: 1200, sweepUpdateMs: 800, live: false });
+    expect(m).toMatchObject({ staggerMs: 120, sweepMs: 3000, sweepUpdateMs: 800, live: false });
     expect(resolveMotion({}, { updateIntervalMs: 2000 }).live).toBe(true);
   });
 
@@ -50,19 +50,19 @@ describe('effect primitives', () => {
     const m = resolveMotion({});
     const few = stagger(m, 5) as (i: number) => number;
     expect(few(0)).toBe(0);
-    expect(few(4)).toBe(160); // 40ms steps
+    expect(few(4)).toBe(480); // 120ms steps
     const many = stagger(m, 1000) as (i: number) => number;
     expect(many(999)).toBeLessThanOrEqual(STAGGER_WINDOW_MS);
-    expect((stagger(m, 5, 2) as (i: number) => number)(0)).toBe(180);
+    expect((stagger(m, 5, 2) as (i: number) => number)(0)).toBe(520); // 2 × 260ms series offset
     expect(stagger(resolveMotion({ enabled: false }), 5)).toBe(0);
   });
 
   it('gradient and glow follow the theme switches', () => {
     const on = resolveTheme();
     const off = resolveTheme({ effects: { gradient: false, glow: false } });
-    expect(fillGradient(on, '#4D8DFF', 'up')).toMatchObject({ type: 'linear', colorStops: [{ color: '#4D8DFF' }, {}] });
+    expect(fillGradient(on, '#4D8DFF', 'up')).toMatchObject({ type: 'linear', colorStops: [{ offset: 0 }, { offset: 0.35, color: '#4D8DFF' }, { offset: 1 }] });
     expect(fillGradient(off, '#4D8DFF', 'up')).toBe('#4D8DFF');
-    expect(glow(on, '#4D8DFF', 2)).toMatchObject({ shadowBlur: 20 });
+    expect(glow(on, '#4D8DFF', 2)).toMatchObject({ shadowBlur: 28 });
     expect(glow(off, '#4D8DFF')).toEqual({});
   });
 
@@ -83,7 +83,7 @@ describe('chart effects', () => {
   it('bars enter sequentially with a value-end gradient and glow on hover', () => {
     const bar = series(build(cpu([10, 20, 30], 'column')))[0]!;
     expect(typeof bar.animationDelay).toBe('function');
-    expect(bar.animationDelay(2)).toBe(80);
+    expect(bar.animationDelay(2)).toBe(240);
     expect(bar.itemStyle.color.type).toBe('linear');
     expect(bar.emphasis.itemStyle.shadowBlur).toBeGreaterThan(0);
     expect(bar.label.valueAnimation).toBe(true);
@@ -92,10 +92,16 @@ describe('chart effects', () => {
   it('lines glow; a live stream adds a ripple on the newest point', () => {
     const still = build(cpu([10, 20, 30]));
     expect(series(still)[0]!.lineStyle.shadowBlur).toBeGreaterThan(0);
-    expect(fx(still)).toHaveLength(0);
+    // A resting line gets only the data-flow light, travelling along its points after the entrance.
+    const [flow, ...rest] = fx(still);
+    expect(rest).toHaveLength(0);
+    expect(flow).toMatchObject({ id: 'fx:flow:CPU', type: 'lines', silent: true, polyline: true, effect: { show: true, loop: true } });
+    expect(flow!.data[0].coords).toEqual([[0, 10], [1, 20], [2, 30]]);
+    expect(flow!.effect.delay).toBe(resolveMotion({}).entranceMs);
+    expect(fx(build(cpu([10, 20, 30]), { reducedMotion: true }))).toHaveLength(0); // no travelling light without motion
 
     const live = build(cpu([10, 20, 30]), { updateIntervalMs: 2000 });
-    const [pulse] = fx(live);
+    const pulse = fx(live).find((s) => s.type === 'effectScatter');
     expect(pulse).toMatchObject({ type: 'effectScatter', silent: true, name: 'CPU' });
     expect(pulse!.data[0].value).toEqual([2, 30]);
   });
@@ -110,11 +116,11 @@ describe('chart effects', () => {
     const line = build(cpu([50, 75, 95], 'line', thresholds));
     const breach = fx(line).find((s) => s.id === 'fx:breach:CPU')!;
     expect(breach.data.map((d: Opt) => d.value)).toEqual([[1, 75], [2, 95]]);
-    expect(breach.data.map((d: Opt) => d.itemStyle.color)).toEqual(['#F6B84A', '#FF637D']);
+    expect(breach.data.map((d: Opt) => d.itemStyle.color)).toEqual(['#FFB020', '#FF2E5B']);
 
     const bars = series(build(cpu([50, 95], 'column', thresholds)))[0]!;
     expect(bars.data[0]).toBe(50);
-    expect(bars.data[1]).toMatchObject({ value: 95, itemStyle: { borderColor: '#FF637D' } });
+    expect(bars.data[1]).toMatchObject({ value: 95, itemStyle: { borderColor: '#FF2E5B' } });
   });
 
   it('hover tooltip skips overlays and shows change vs. the previous point and status', () => {
@@ -130,7 +136,7 @@ describe('chart effects', () => {
 
   it('gauge: tip marker rotates with a slow physical sweep; readout counts in sync', () => {
     const [main] = series(build(definitions.gauge));
-    expect(main).toMatchObject({ animationDuration: 1200, animationEasing: 'cubicOut', animationDurationUpdate: 800, animationEasingUpdate: 'cubicInOut' });
+    expect(main).toMatchObject({ animationDuration: 3000, animationEasing: 'cubicOut', animationDurationUpdate: 800, animationEasingUpdate: 'cubicInOut' });
     expect(main!.pointer.show).toBe(true);
     expect(main!.detail.valueAnimation).toBe(true);
     expect(main!.progress.itemStyle.shadowBlur).toBeGreaterThan(0);
@@ -181,13 +187,22 @@ describe('3D style (theme.effects.depth)', () => {
     expect(second[2]).toBe(first[3]); // second segment starts where the first ends
   });
 
-  it('pie becomes a thick disk; the interactive pie stays series 0 on top', () => {
+  it('pie becomes a tilted thick disk: elliptical top faces over a side wall; legend source stays series 0', () => {
     const o = build({ ...definitions.pie, ...depth });
     const s = series(o);
-    expect(s[0]).toMatchObject({ id: 'pie', z: 3 });
-    const wall = s.filter((x) => String(x.id).startsWith('fx:depth'));
-    expect(wall.length).toBeGreaterThan(3);
-    expect(wall.every((x) => x.silent && x.z < 3)).toBe(true);
+    expect(s[0]).toMatchObject({ id: 'pie', radius: ['0%', '0%'], silent: true }); // legend/colour source, not drawn
+    const pie3d = s.find((x) => x.id === 'pie3d')!;
+    expect(pie3d.type).toBe('custom');
+    // Second slice reaches the front half, so it has a visible curved wall.
+    const el = pie3d.renderItem({ dataIndex: 1 }, { getWidth: () => 400, getHeight: () => 300 });
+    const top = el.children.find((c: Opt) => c.type === 'group')!;
+    expect(top.scaleY).toBeLessThan(1); // tilted: squashed to an ellipse
+    const walls = el.children.filter((c: Opt) => c.type === 'polygon');
+    expect(walls.length).toBeGreaterThan(0); // curved side band, not stacked layers
+    expect(walls.every((w: Opt) => w.z2 < top.children[0].z2)).toBe(true); // tops above the wall
+    expect(walls[0].style.fill).toMatchObject({ type: 'linear', global: true }); // one cylinder light across slices
+    expect(s.some((x) => x.id === 'fx:sheen')).toBe(true); // shared highlight over the disc
+    expect(s.some((x) => x.id === 'fx:hud')).toBe(false);
   });
 
   it('points become lit spheres; tooltip markers keep the solid colour', () => {

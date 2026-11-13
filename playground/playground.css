@@ -10,7 +10,7 @@ body {
   color: #F3F7FC;
   font-family: Pretendard, Inter, system-ui, -apple-system, 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
 }
-.pg { max-width: 1520px; margin: 0 auto; padding: 24px 24px 48px; }
+.pg { max-width: 1920px; margin: 0 auto; padding: 24px 24px 48px; }
 .pg-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
 .pg-brand { display: flex; align-items: center; gap: 14px; }
 .pg-brand h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
@@ -53,15 +53,32 @@ body {
   .c3 { grid-column: span 12; }
 }
 
-.pg-log {
-  display: flex; flex-direction: column; min-height: 0; height: 100%; max-height: 330px;
-  background: #0B1728; border: 1px solid #203650; border-radius: 14px; padding: 16px;
-}
-.pg-log h3 { margin: 0; font-size: 14px; font-weight: 600; }
-.pg-log__hint { margin: 2px 0 10px; font-size: 12px; color: #8396AD; }
-.pg-log__list { margin: 0; padding: 0; list-style: none; overflow: auto; font-size: 11px; display: flex; flex-direction: column; gap: 4px; }
-.pg-log__list li { display: grid; grid-template-columns: 64px 1fr; gap: 2px 8px; padding: 6px 8px; border-radius: 6px; background: #10223A; }
-.pg-log__time { color: #8396AD; font-variant-numeric: tabular-nums; grid-row: span 2; }
-.pg-log__type { color: #36D6F5; font-weight: 600; }
-.pg-log__detail { color: #A9B9CC; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pg-log__empty { margin: auto; color: #8396AD; font-size: 12px; }
+.pg-views { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; background: #0B1728; border: 1px solid #203650; }
+.pg-views button { height: 28px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; color: #A9B9CC; font: inherit; font-size: 12px; cursor: pointer; }
+.pg-views button[aria-pressed='true'] { background: #2563A8; color: #F3F7FC; font-weight: 600; }
+.pg-views button:focus-visible { outline: 2px solid #9BC7FF; outline-offset: 2px; }
+.pg-field { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 999px; background: #0B1728; border: 1px solid #203650; font-size: 12px; color: #A9B9CC; }
+.pg-field input[type='color'] { width: 22px; height: 22px; padding: 0; border: 0; background: none; cursor: pointer; }
+.pg-field input[type='range'] { width: 96px; accent-color: #4D8DFF; }
+.pg-field .cv-num { min-width: 34px; color: #F3F7FC; }
+
+.pg-sections { display: flex; flex-direction: column; gap: 36px; }
+.pg-section__head { margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #203650; }
+.pg-section__head h2 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 17px; font-weight: 700; }
+.pg-section__head p { margin: 4px 0 0; font-size: 12px; color: #8396AD; }
+.pg-tag { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 11px; font-weight: 700; background: #203650; color: #A9B9CC; }
+.pg-tag--legacy { background: rgb(255 176 32 / 16%); color: #FFC35C; border: 1px solid rgb(255 176 32 / 45%); }
+.pg-tag--new { background: rgb(54 214 245 / 14%); color: #5FE0FA; border: 1px solid rgb(54 214 245 / 45%); }
+
+/* White theme preview */
+body:has(.pg.is-light) { background: #f3f5f9; color: #1c2533; }
+.pg.is-light .pg-brand p, .pg.is-light .pg-section__head p { color: #5f6f86; }
+.pg.is-light .pg-section__head { border-bottom-color: #dde3ec; }
+.pg.is-light .pg-switch, .pg.is-light .pg-field, .pg.is-light .pg-views { background: #ffffff; border-color: #d3dae5; color: #4d5d75; }
+.pg.is-light .pg-switch:has(input:checked) { color: #0f1724; }
+.pg.is-light .pg-switch span { background: #d3dae5; }
+.pg.is-light .pg-switch input:checked + span { background: #1261ed; }
+.pg.is-light .pg-views button { color: #4d5d75; }
+.pg.is-light .pg-views button[aria-pressed='true'] { background: #1261ed; color: #fff; }
+.pg.is-light .pg-action { background: #ffffff; border-color: #c9d2df; color: #1c2533; }
+.pg.is-light .pg-field .cv-num { color: #0f1724; }

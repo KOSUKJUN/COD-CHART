@@ -94,14 +94,14 @@ describe('restricted markdown', () => {
 describe('theme', () => {
   it('ignores unsafe override values at resolve time too', () => {
     const t = resolveTheme({ overrides: { accentBlue: 'url(x)' as string, success: '#00ff00' } });
-    expect(t.tokens.accentBlue).toBe('#4D8DFF');
+    expect(t.tokens.accentBlue).toBe('#2F7BFF');
     expect(t.tokens.success).toBe('#00ff00');
     expect(isSafeColor('#abc')).toBe(true);
   });
 
   it('exposes CSS variables for every token and palette slot', () => {
     const vars = themeToCssVars(resolveTheme());
-    expect(vars['--cv-bg-surface']).toBe('#0B1728');
+    expect(vars['--cv-bg-surface']).toBe('#07101F');
     expect(vars['--cv-series-8']).toBeDefined();
   });
 
@@ -121,7 +121,7 @@ describe('motion policy', () => {
     expect(resolveMotion({}, { productMotionEnabled: false }).enabled).toBe(false);
     expect(resolveMotion({ preset: 'none' }).enabled).toBe(false);
     expect(resolveMotion({ enabled: false }).updateMs).toBe(0);
-    expect(resolveMotion({}).entranceMs).toBe(500);
+    expect(resolveMotion({}).entranceMs).toBe(2000);
   });
 
   it('shortens or drops update tweens for fast streams', () => {

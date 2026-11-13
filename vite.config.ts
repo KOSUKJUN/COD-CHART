@@ -6,6 +6,11 @@ const src = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 export default defineConfig(({ mode }) => ({
   plugins: [vue()],
+  server: {
+    port: 5174,
+    // Fail instead of silently moving to another port, so the debug URL stays valid.
+    strictPort: true,
+  },
   resolve: {
     alias: {
       '@codvil/chart/core': src('./src/core/index.ts'),

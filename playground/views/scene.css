@@ -1,0 +1,99 @@
+/* COD-M look-alike scenes (playground only). Approximates the 3D 상황판 and 메인화면 captures. */
+
+.cm-scene { position: relative; isolation: isolate; border-radius: 14px; overflow: hidden; min-height: calc(100vh - 140px); }
+
+/* ── 3D 상황판 ───────────────────────────────────────── */
+.cm-scene--board {
+  background:
+    radial-gradient(60% 55% at 50% 40%, rgb(30 110 180 / 38%), transparent 70%),
+    radial-gradient(40% 30% at 15% 80%, rgb(20 70 130 / 30%), transparent 70%),
+    #020a16;
+  padding: 18px;
+}
+.cm-scene__sky {
+  position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: 0.85;
+  background-image:
+    radial-gradient(1.2px 1.2px at 23px 41px, #fff, transparent),
+    radial-gradient(1px 1px at 141px 97px, #cfe8ff, transparent),
+    radial-gradient(1.6px 1.6px at 77px 163px, #fff, transparent),
+    radial-gradient(1px 1px at 189px 19px, #9fd4ff, transparent),
+    radial-gradient(2px 2px at 211px 141px, rgb(255 255 255 / 70%), transparent),
+    radial-gradient(1px 1px at 47px 211px, #fff, transparent);
+  background-size: 240px 240px;
+}
+.cm-scene__floor {
+  position: absolute; left: -30%; right: -30%; bottom: -10%; height: 70%; z-index: -1; pointer-events: none;
+  background-image:
+    linear-gradient(rgb(40 130 255 / 45%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(40 130 255 / 45%) 1px, transparent 1px);
+  background-size: 120px 120px;
+  transform: perspective(700px) rotateX(62deg);
+  transform-origin: 50% 100%;
+  mask-image: linear-gradient(to top, #000 30%, transparent);
+}
+
+.cm-board { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(0, 1.9fr) minmax(280px, 1fr); gap: 18px; align-items: start; }
+.cm-board__col { display: flex; flex-direction: column; gap: 14px; }
+.cm-board__center { position: relative; display: flex; flex-direction: column; align-items: center; }
+.cm-board__bottom { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; width: 100%; margin-top: -90px; }
+
+.cm-globe { width: min(100%, 520px); aspect-ratio: 1; filter: drop-shadow(0 0 40px rgb(54 214 245 / 25%)); }
+.cm-globe svg { width: 100%; height: 100%; overflow: visible; }
+.cm-globe__orbit { transform-origin: 0 0; animation: cm-spin 40s linear infinite; }
+.cm-globe__meridians { transform-origin: 0 0; animation: cm-sway 18s ease-in-out infinite alternate; }
+@keyframes cm-spin { to { transform: rotate(360deg); } }
+@keyframes cm-sway { from { transform: scaleX(1); } to { transform: scaleX(0.82); } }
+@media (prefers-reduced-motion: reduce) { .cm-globe__orbit, .cm-globe__meridians { animation: none; } }
+
+/* ── 메인화면 ─────────────────────────────────────────── */
+.cm-scene--main {
+  background:
+    radial-gradient(120% 60% at 30% 110%, rgb(40 70 130 / 55%), transparent 60%),
+    radial-gradient(90% 50% at 90% 100%, rgb(30 60 120 / 45%), transparent 60%),
+    linear-gradient(180deg, #13214a 0%, #16275a 100%);
+  padding: 14px 18px 24px;
+}
+.cm-main__bar { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-bottom: 18px; }
+.cm-main__crumb { font-size: 16px; font-weight: 700; color: #c9d6ee; }
+.cm-main__tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.cm-main__tabs span { padding: 4px 10px; border-radius: 3px; background: #e9edf5; color: #1d2a44; font-size: 11px; }
+.cm-main__tabs span.is-active { background: #1e8cff; color: #fff; font-weight: 700; }
+.cm-main__range { margin-left: auto; color: #3fb6ff; font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
+.cm-main__grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 22px 18px; }
+.cm-main__grid .w4 { grid-column: span 4; } .cm-main__grid .w6 { grid-column: span 6; } .cm-main__grid .w8 { grid-column: span 8; }
+
+/* ── Content panel (host chrome) ─────────────────────── */
+.cm-panel { display: flex; flex-direction: column; min-width: 0; background: var(--cm-surface); }
+.cm-panel__head { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px 10px; }
+.cm-panel__title { margin: 0; font-size: 15px; font-weight: 700; color: #f3f7fc; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cm-panel__head::after {
+  content: ''; position: absolute; left: 0; right: 30%; bottom: 2px; height: 6px;
+  background: linear-gradient(90deg, rgb(54 140 255 / 85%), rgb(54 140 255 / 0%));
+  transform: skewX(-40deg); transform-origin: 0 100%;
+}
+.cm-panel__tools { display: inline-flex; gap: 5px; }
+.cm-panel__tools i { width: 12px; height: 12px; border-radius: 2px; background: #e8eef8; opacity: 0.85; }
+.cm-panel__body { padding: 6px 10px 10px; }
+
+.cm-panel--hud { border: 1px solid rgb(54 214 245 / 28%); border-radius: 4px; box-shadow: inset 0 0 24px rgb(54 214 245 / 6%); }
+.cm-panel--hud .cm-panel__title { font-size: 14px; }
+.cm-panel--main { border-radius: 2px; }
+
+@media (max-width: 1180px) {
+  .cm-board { grid-template-columns: 1fr; }
+  .cm-board__bottom { margin-top: 0; }
+  .cm-main__grid .w4, .cm-main__grid .w6, .cm-main__grid .w8 { grid-column: span 12; }
+}
+@media (max-width: 640px) {
+  .cm-board__bottom { grid-template-columns: 1fr; }
+}
+
+/* ── White theme (COD-M data-ui-theme="white": page #f3f5f9, white cards) ── */
+.pg.is-light .cm-scene--board, .pg.is-light .cm-scene--main { background: #f3f5f9; }
+.pg.is-light .cm-scene__sky, .pg.is-light .cm-scene__floor, .pg.is-light .cm-globe { display: none; }
+.pg.is-light .cm-board__bottom { margin-top: 0; }
+.pg.is-light .cm-panel { border: 1px solid #dde3ec; box-shadow: 0 1px 2px rgb(15 23 36 / 6%); }
+.pg.is-light .cm-panel__title { color: #0f1724; }
+.pg.is-light .cm-panel__tools i { background: #c9d2df; }
+.pg.is-light .cm-main__crumb { color: #1c2533; }
+.pg.is-light .cm-main__range { color: #1261ed; }

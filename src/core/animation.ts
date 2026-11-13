@@ -26,7 +26,8 @@ export interface ResolvedMotion {
   live: boolean;
 }
 
-export const MOTION_DEFAULTS = { entranceMs: 500, updateMs: 400, emphasisMs: 150, staggerMs: 40, sweepMs: 1200, sweepUpdateMs: 800 } as const;
+/** Entrance is deliberately slow enough to read on a wall dashboard; updates stay quick for live data. */
+export const MOTION_DEFAULTS = { entranceMs: 2000, updateMs: 400, emphasisMs: 150, staggerMs: 120, sweepMs: 3000, sweepUpdateMs: 800 } as const;
 
 /** Updates arriving faster than this make update tweens counter-productive. */
 export const FAST_UPDATE_THRESHOLD_MS = 1000;

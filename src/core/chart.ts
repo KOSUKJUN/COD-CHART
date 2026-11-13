@@ -123,12 +123,58 @@ export function createChart(
     }
   };
 
-  const setState = (next: Omit<ChartState, 'warnings'> & { warnings?: string[] }) => {
+  // ── Live data delay ──
+  let lastDataAt = 0;
+  let stale = false;
+  let staleTimer: ReturnType<typeof setTimeout> | null = null;
+  const gaps: number[] = [];
+
+  const setState = (next: Omit<ChartState, 'warnings' | 'stale' | 'lastUpdateAt'> & { warnings?: string[] }) => {
     const warnings = next.warnings ?? [...normalizeWarnings, ...(adapter?.warnings ?? [])];
-    const changed = next.status !== state.status || next.message !== state.message || warnings.join('|') !== state.warnings.join('|');
-    state = { ...next, warnings };
+    const changed = next.status !== state.status || next.message !== state.message || warnings.join('|') !== state.warnings.join('|') || stale !== !!state.stale;
+    state = { ...next, warnings, ...(stale ? { stale } : {}), ...(lastDataAt ? { lastUpdateAt: lastDataAt } : {}) };
     if (changed) emit('state.change', { state });
   };
+
+  /** How long live data may pause before it counts as late; null = not a live chart / unknown yet. */
+  const staleAfter = (): number | null => {
+    const o = def?.options?.staleAfterMs;
+    if (o === false) return null;
+    if (typeof o === 'number') return o;
+    const ds = def?.dataSource;
+    if (ds?.kind === 'rest') return ds.refresh?.mode === 'poll' ? ds.refresh.intervalMs * 2.5 : null;
+    if (ds?.kind !== 'stream' && !def?.options?.realtime) return null;
+    if (!gaps.length) return null;
+    const sorted = [...gaps].sort((a, b) => a - b);
+    return Math.max(5000, 3 * sorted[Math.floor(sorted.length / 2)]!);
+  };
+
+  const armStale = () => {
+    if (staleTimer) clearTimeout(staleTimer);
+    staleTimer = null;
+    const after = staleAfter();
+    if (after == null || destroyed) return;
+    staleTimer = setTimeout(() => {
+      staleTimer = null;
+      if (destroyed) return;
+      stale = true;
+      setState({ status: state.status, message: state.message, correlationId: state.correlationId, warnings: state.warnings });
+      schedule(false); // live markers grey out
+    }, after);
+  };
+
+  /** New data arrived: note the gap (median of the last few drives the automatic limit). */
+  const noteData = () => {
+    const now = Date.now();
+    if (lastDataAt) {
+      gaps.push(now - lastDataAt);
+      if (gaps.length > 6) gaps.shift();
+    }
+    lastDataAt = now;
+    if (stale) stale = false; // the next render publishes it
+    armStale();
+  };
+  cleanups.push(() => { if (staleTimer) clearTimeout(staleTimer); });
 
   /** Set by a data/definition failure; only fresh data or a valid definition clears it. */
   let failed = false;
@@ -152,6 +198,7 @@ export function createChart(
       loading = false;
       failed = false;
       ingest(incoming);
+      noteData();
       schedule(false);
     },
     onLoading: () => {
@@ -178,6 +225,7 @@ export function createChart(
         definition: def, rows, theme, locale: locale(),
         motion: resolveMotion(def.animation, motionEnv()),
         summary: buildSummary(def, rows, locale()),
+        stale,
       };
       try {
         if (!mounted) {
@@ -235,7 +283,7 @@ export function createChart(
     }
 
     const kind = def.dataSource?.kind ?? 'static';
-    if (kind === 'static' && rowsChanged) ingest(def.data.rows ?? []);
+    if (kind === 'static' && rowsChanged) { ingest(def.data.rows ?? []); noteData(); }
     controller.start(); // idempotent
     controller.setSpec(def.dataSource);
     if (structural || rowsChanged) schedule(structural);
@@ -292,6 +340,7 @@ export function createChart(
     setData(newRows) {
       if (destroyed || !def) return;
       ingest(newRows);
+      noteData();
       loading = false;
       failed = false;
       schedule(false);
@@ -302,6 +351,7 @@ export function createChart(
       const all = rows.concat(extra);
       const cap = windowSize ?? def.data.maxRows;
       rows = cap && all.length > cap ? all.slice(all.length - cap) : all;
+      noteData();
       schedule(false);
     },
     refresh: () => !destroyed && controller.refresh(),

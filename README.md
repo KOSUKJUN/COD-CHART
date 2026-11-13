@@ -10,7 +10,7 @@ Vue 3 + Apache ECharts 기반의 차트 컴포넌트 라이브러리. Premium Da
 
 ```bash
 npm install
-npm run dev        # 데모 대시보드 http://localhost:5173
+npm run dev        # 데모 대시보드 http://localhost:5174
 npm test           # core / adapter / Vue / 경계 테스트
 npm run typecheck
 npm run build      # dist/ — ESM + d.ts + CSS (vue, echarts는 peer)
