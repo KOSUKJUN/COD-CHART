@@ -99,6 +99,11 @@ describe('one-by-one loop and real-time x labels', () => {
     expect(build(traffic('line', { drawOrder: 'one-by-one' })).loop).toEqual({ holdMs: expect.any(Number) });
     expect(build(traffic('line', {})).loop).toBeUndefined();
   });
+  it('with realtime, one-by-one draws on entrance only — no repeating cycle hiding the slide', () => {
+    const r = build(traffic('line', { drawOrder: 'one-by-one', realtime: true }));
+    expect(r.loop).toBeUndefined();
+    expect(r.entranceMs).toBeGreaterThan(0);
+  });
 
   it('real-time draws its own x labels (keyed by label, so they slide) over transparent native ones', () => {
     const o = build(traffic('line', { realtime: true })).option;

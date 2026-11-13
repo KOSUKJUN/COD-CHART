@@ -38,7 +38,7 @@ export interface BuildResult {
    */
   entranceMs?: number;
   /**
-   * Line/area one-by-one: the draw keeps cycling. After the entrance the finished chart holds
+   * Line/area one-by-one (without `realtime`): the draw keeps cycling. After the entrance the finished chart holds
    * for `holdMs`, fades out and draws in again, line by line (the adapter runs the cycle).
    */
   loop?: { holdMs: number };
@@ -811,7 +811,9 @@ function buildCartesian(ctx: Ctx): BuildResult {
     option,
     warnings,
     entranceMs,
-    ...(oneByOne ? { loop: { holdMs: DRAW_LOOP_HOLD_MS } } : {}),
+    // Real-time charts redraw on every tick, so a repeating draw cycle would keep hiding the slide:
+    // with `realtime` the one-by-one draw plays on entrance only, then the chart slides as data arrives.
+    ...(oneByOne && !realtime ? { loop: { holdMs: DRAW_LOOP_HOLD_MS } } : {}),
     lookup: (si, di) => {
       const s = series[si];
       return s ? { row: s.rows[di], name: s.name } : undefined;

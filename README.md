@@ -119,11 +119,13 @@ handle.on('point.click', (e) => …);
 handle.destroy(); // 엔진 인스턴스·타이머·옵저버·구독 모두 해제
 ```
 
-## 16종 MVP
+## 컴포넌트 55종
 
-| Native(DOM) | ECharts |
+| Native(DOM) · 34종 | ECharts · 21종 |
 |---|---|
-| KPI 카드, 데이터 테이블, 상태/경보 목록, 텍스트(제한 마크다운), 진행률/임계치 | 라인, 영역, 가로 막대, 누적 막대, 세로 막대, 파이, 도넛, 게이지, 산점도, 히트맵, 트리맵 |
+| KPI 카드, 데이터 테이블(국가·프로세스·라벨·뉴스·대시 테이블 포함), 상태/경보 목록, 장비 상태 타일, 텍스트(제한 마크다운), 진행률/임계치, 원형 진행률, Label ver1–18·Multi Label, 위기경보 3종 | 라인, 영역, 가로 막대, 누적 막대, 세로 막대, 파이, 도넛, 계층형 파이, 게이지, 다중 게이지, 산점도, 버블, 히트맵, 트리맵, 레이더, 워드 클라우드, 캔들스틱, 박스플롯, 깔때기, 샌키, 선버스트 |
+
+라인·영역은 `realtime`(실시간 추가), `drawOrder: 'one-by-one'`(한 줄씩 그리기), `zoom`(하단 구간 탐색)을, 관제 화면용으로 `autoTour`, `thresholds`+`alarm`, `staleAfterMs`(데이터 지연), `ranking`(Top-N), `pattern: 'week-hour'`를 지원합니다.
 
 인코딩·옵션·상호작용 상세: [docs/component-catalog.md](docs/component-catalog.md)
 

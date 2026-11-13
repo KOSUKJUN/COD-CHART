@@ -1,6 +1,6 @@
 # COD-CHART AI 개발 핸드오프
 
-다른 AI 대화에서 이 저장소 작업을 이어갈 때 사용할 현재 프로젝트 및 작업 이력 요약이다. 기준 시점: 2026-11-11.
+다른 AI 대화에서 이 저장소 작업을 이어갈 때 사용할 현재 프로젝트 및 작업 이력 요약이다. 기준 시점: 2026-11-13.
 
 ## 다음 AI에게
 
@@ -10,6 +10,9 @@
 
 - 저장소: `KOSUKJUN/COD-CHART` — https://github.com/KOSUKJUN/COD-CHART
 - 브랜치: `main`
+- 로컬 경로: `D:\Business\Solution\claude\COD-CHART` (2026-11-13부터. 예전 `C:\Users\user\COD-CHART`는 더 이상 쓰지 않는다)
+- 푸시 계정: 이 PC의 Git은 `leonis1401-rgb`로 인증하며, 이 계정이 저장소 Collaborator(쓰기 권한)다. 커밋 작성자는 저장소 로컬 설정 `shinjungeun`.
+- 컴포넌트: 55종 (ECharts 차트 21종 + DOM 위젯 34종). 전체 목록과 옵션은 `docs/component-catalog.md`.
 - 패키지: `@codvil/chart` 0.1.2
 - Vue 3 + TypeScript + Apache ECharts 기반 차트 컴포넌트 라이브러리.
 - `@codvil/chart/core`는 Vue/ECharts와 독립적인 core API를 제공한다.
@@ -37,7 +40,21 @@
    - 변경: ECharts 차트 효과/애니메이션 지원, Vue 데모와 스타일, 문서 및 관련 테스트 추가·수정
 6. 직전 작업에서 확인된 Git 상태는 `main...origin/main`이었으며 미커밋 변경은 없었다.
 
-이 요약은 현재 대화와 저장소에서 확인할 수 있었던 정보만 포함한다. 이전의 다른 대화창 기록은 확인되지 않았으므로, 그곳의 작업 내역이나 미완료 요청을 추정하지 않는다.
+### 2026-11-13 작업
+
+7. 로컬 저장소를 `D:\Business\Solution\claude\COD-CHART`로 옮겼다(GitHub에서 새로 clone).
+8. 다른 대화 세션들이 커밋하지 않고 남긴 작업(약 30개 파일)을 `5bba125 Add dashboard features, scene views and playground toggles`로 커밋·푸시했다.
+   - 라인·영역 옵션: `realtime`(실시간 추가·슬라이드), `drawOrder: 'one-by-one'`(한 줄씩 그리기), `zoom`(하단 구간 탐색)
+   - 관제 옵션: `autoTour`, `thresholds` + `alarm`(패널 경보), `staleAfterMs`(데이터 지연 표시), `ranking`(Top-N bar race), heatmap `pattern: 'week-hour'`, `status-grid` 위젯
+   - 플레이그라운드: 컴포넌트 / 3D 상황판 / 메인화면 보기(`playground/views/`)
+9. 플레이그라운드 정리
+   - "선형·영역 차트 옵션 · 2종" 섹션을 없앴다. 대신 상단 "실시간 추가"·"한 줄씩 그리기" 토글이 맨 위 "기존 COD-M 차트 대체" 섹션의 선형·영역 차트를 직접 바꾼다.
+   - "실시간 추가", "하단 차트 검색" 토글은 기본 꺼짐이다(`d5e7a8c`, `7b549b4`).
+   - "관제 화면 기능" 섹션은 우리 차트로 만든 관제용 예시·테스트다. 정식 요구사항은 아니지만 참고용으로 그대로 둔다.
+10. `realtime`과 `drawOrder: 'one-by-one'`을 함께 쓰면, 한 줄씩 그리기는 진입 때 한 번만 하고 이후에는 데이터에 따라 슬라이드한다(반복 그리기 루프 없음).
+11. `docs/component-catalog.md`를 레지스트리 기준 55종과 새 옵션 설명으로 갱신하고, `.gitattributes`로 줄바꿈을 LF로 고정했다.
+
+이 요약은 대화와 저장소에서 확인한 정보만 포함한다. 8번의 작업을 한 다른 세션들의 대화 기록은 확인하지 못했으므로, 그 작업의 배경이나 미완료 요청은 추정하지 않는다.
 
 ## 최신 작업에 포함된 기능 단서
 
@@ -53,7 +70,9 @@ npm run typecheck
 npm run build
 ```
 
-최근 검증에서 `npm test`와 `npm run build`는 성공했다. `npm run typecheck`는 해당 작업에서 별도로 실행하지 않았다.
+개발 서버는 `http://localhost:5174`에서 열린다(`vite.config.ts`, `strictPort`). VS Code 실행 구성은 `.vscode/launch.json`에 있다.
+
+2026-11-13 검증에서 `npm test`와 `npm run typecheck`가 성공했다.
 
 ## 다음 대화에서 시작할 때 붙여넣을 문구
 
