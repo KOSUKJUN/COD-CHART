@@ -372,6 +372,149 @@ export function sweepEdge(theme: ResolvedTheme, motion: ResolvedMotion, center: 
   }];
 }
 
+/** Border flow: one lap of the comet around the ring. */
+export const BORDER_FLOW_PERIOD_MS = 8000;
+/** Flow lights stay soft: a faint glow that hints at motion without pulling the eye off the data. */
+const FLOW_SOFT = { opacity: 0.55, blur: 4, dotR: 1.8 } as const;
+
+/**
+ * Border flow: after the entrance sweep, one soft streak of light (no head dot, fading tail) runs
+ * clockwise around the HUD halo ring just outside the pie/donut, forever. Flat (2D) pies only.
+ * The lap position comes from the clock, so a redraw (hover readout, resize, data update)
+ * carries on where the comet was instead of jumping back to 12 o'clock.
+ * `outer` = ring radius in % of half the shorter side; `startDelayMs` = when the comet fades in.
+ */
+export function borderFlow(theme: ResolvedTheme, motion: ResolvedMotion, center: [string, string], outer: number, startDelayMs: number): Opt[] {
+  if (!motion.enabled || !theme.effects.glow) return [];
+  const pct = (v: string, size: number) => (parseFloat(v) / 100) * size;
+  const tone = theme.mode === 'light' ? theme.tokens.accentBlue : shade(theme.tokens.accentCyan, 0.5);
+  const TAIL = Math.PI * 0.42; // tail length (radians)
+  const SEGMENTS = 14;
+  const born = Date.now();
+  return [{
+    id: 'fx:border', type: 'custom', coordinateSystem: 'none', silent: true, tooltip: { show: false }, z: 4,
+    data: [[0]],
+    renderItem: (_params: Opt, api: Opt) => {
+      const w = api.getWidth(), h = api.getHeight();
+      const cx = pct(center[0], w), cy = pct(center[1], h);
+      const r = (outer / 100) * (Math.min(w, h) / 2);
+      // Where in the lap we are now; rotation runs clockwise (zrender rotation is counter-clockwise).
+      const phase = ((Date.now() % BORDER_FLOW_PERIOD_MS) / BORDER_FLOW_PERIOD_MS) * Math.PI * 2;
+      // Still inside the entrance: wait for the sweep, then fade in. A later redraw shows them at once.
+      const delay = Math.max(0, startDelayMs - (Date.now() - born));
+      const fadeIn = (opacity: number) => ({ enterFrom: { style: { opacity: 0 } }, enterAnimation: { duration: 700, delay }, style: { opacity } });
+      // No head dot: just a streak of light that brightens toward its front, for a soft look.
+      const comet = (offset: number) => Array.from({ length: SEGMENTS }, (_, j) => {
+        const a0 = offset - TAIL + (j * TAIL) / SEGMENTS;
+        const k = (j + 1) / SEGMENTS; // 0 → 1 toward the front
+        const seg = fadeIn(FLOW_SOFT.opacity * Math.pow(k, 1.6));
+        return {
+          type: 'arc', shape: { cx, cy, r, startAngle: a0, endAngle: a0 + TAIL / SEGMENTS + 0.01 },
+          ...seg, style: { ...seg.style, fill: 'none', stroke: tone, lineWidth: 1 + 1.4 * k, lineCap: 'round', shadowBlur: FLOW_SOFT.blur * k, shadowColor: tone },
+        };
+      });
+      return {
+        type: 'group', originX: cx, originY: cy,
+        keyframeAnimation: {
+          duration: BORDER_FLOW_PERIOD_MS, loop: true,
+          keyframes: [{ percent: 0, rotation: -phase }, { percent: 1, rotation: -phase - Math.PI * 2, easing: 'linear' }],
+        },
+        children: comet(0),
+      };
+    },
+  }];
+}
+
+/** Web flow: how long the light takes per web radius of travel. */
+export const WEB_FLOW_MS_PER_RADIUS = 1400;
+
+/**
+ * Web flow: a closed wandering route over a radar web, in unit coordinates (outer ring radius 1,
+ * y up). Mostly along the rings, now and then down or up a spoke, ending back where it began so
+ * the light can loop without a jump. Deterministic per `seed`, so a redraw keeps the same route.
+ */
+export function webRoute(spokes: number, rings: number, seed: number, steps = 26): [number, number][] {
+  let st = (seed >>> 0) || 1;
+  const rnd = () => ((st = (st * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+  const at = (k: number, i: number): [number, number] => {
+    const a = Math.PI / 2 + (((i % spokes) + spokes) % spokes) * ((Math.PI * 2) / spokes); // first spoke up, counter-clockwise
+    return [Math.cos(a) * (k / rings), Math.sin(a) * (k / rings)];
+  };
+  let k = rings, i = 0, dir = 1;
+  const route: [number, number][] = [at(k, i)];
+  for (let n = 0; n < steps; n++) {
+    const r = rnd();
+    if (r < 0.2 && k > 1) k--; // inward along the spoke
+    else if (r < 0.32 && k < rings) k++; // outward
+    else { if (r > 0.92) dir = -dir; i += dir; } // along the ring, sometimes turning back
+    route.push(at(k, i));
+  }
+  // Home: out along the spoke, then the short way round the outer ring.
+  while (k < rings) route.push(at(++k, i));
+  let back = ((-i % spokes) + spokes) % spokes;
+  const step = back <= spokes / 2 ? 1 : -1;
+  if (step < 0) back = spokes - back;
+  for (let n = 0; n < back; n++) route.push(at(k, (i += step)));
+  return route;
+}
+
+/**
+ * Web flow: after the entrance, one soft streak of light (no head dot) wanders over the radar's
+ * spider web (rings and spokes), forever. The route is fixed per chart and the position on it
+ * comes from the clock, so a redraw carries on where the light was.
+ * `radius` = web radius in % of half the shorter side, as ECharts' radar radius.
+ */
+export function webFlow(theme: ResolvedTheme, motion: ResolvedMotion, center: [string, string], radius: number, spokes: number, rings: number, seed: number, startDelayMs: number): Opt[] {
+  if (!motion.enabled || !theme.effects.glow || spokes < 3) return [];
+  const pct = (v: string, size: number) => (parseFloat(v) / 100) * size;
+  const tone = theme.mode === 'light' ? theme.tokens.accentBlue : shade(theme.tokens.accentCyan, 0.5);
+  const route = webRoute(spokes, rings, seed);
+  const lens = route.slice(1).map(([x, y], n) => Math.hypot(x - route[n]![0], y - route[n]![1]));
+  const total = lens.reduce((a, b) => a + b, 0);
+  const duration = Math.round(total * WEB_FLOW_MS_PER_RADIUS);
+  const born = Date.now();
+  const TRAIL = 9, LAG_MS = 40; // close-set dots read as one soft streak, no head dot
+  return [{
+    id: 'fx:web', type: 'custom', coordinateSystem: 'none', silent: true, tooltip: { show: false }, z: 4,
+    data: [[0]],
+    renderItem: (_params: Opt, api: Opt) => {
+      const w = api.getWidth(), h = api.getHeight();
+      const cx = pct(center[0], w), cy = pct(center[1], h);
+      const R = (radius / 100) * (Math.min(w, h) / 2);
+      const px = ([x, y]: [number, number]) => ({ x: cx + x * R, y: cy - y * R });
+      const delay = Math.max(0, startDelayMs - (Date.now() - born));
+      // Keyframes for a dot `lagMs` behind the head, starting from where it is now.
+      const keyframes = (lagMs: number) => {
+        const start = (((((Date.now() - lagMs) % duration) + duration) % duration) / duration) * total;
+        // Walk the closed route once round from `start`: split the segment we are in.
+        let acc = 0, seg = 0;
+        while (seg < lens.length - 1 && acc + lens[seg]! < start) acc += lens[seg++]!;
+        const f = lens[seg]! ? (start - acc) / lens[seg]! : 0;
+        const a = route[seg]!, b = route[seg + 1]!;
+        const here: [number, number] = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+        const pts: [number, number][] = [here, ...route.slice(seg + 1), ...route.slice(1, seg + 1), here];
+        let d = 0;
+        return pts.map((p, n) => {
+          if (n) d += Math.hypot(p[0] - pts[n - 1]![0], p[1] - pts[n - 1]![1]);
+          return { percent: Math.min(1, d / total), ...px(p), ...(n ? { easing: 'linear' } : {}) };
+        });
+      };
+      const dot = (j: number) => {
+        const k = 1 - j / TRAIL; // 1 at the front → fading trail
+        const kf = keyframes(j * LAG_MS);
+        return {
+          type: 'circle', x: kf[0]!.x, y: kf[0]!.y, shape: { cx: 0, cy: 0, r: FLOW_SOFT.dotR * (0.5 + 0.5 * k) },
+          style: { fill: tone, opacity: FLOW_SOFT.opacity * Math.pow(k, 1.6), shadowBlur: FLOW_SOFT.blur * k, shadowColor: tone },
+          enterFrom: { style: { opacity: 0 } }, enterAnimation: { duration: 700, delay },
+          keyframeAnimation: { duration, loop: true, keyframes: kf },
+        };
+      };
+      // Back of the streak first, front on top.
+      return { type: 'group', children: Array.from({ length: TRAIL }, (_, j) => dot(TRAIL - 1 - j)) };
+    },
+  }];
+}
+
 /** E/G — hovered slice pops outward by this many px; the others shrink to this scale. */
 export const PIE_HOVER = { popPx: 5, recede: 0.97, ms: 280, liftPx: 8, liftOutPx: 4, recede3d: 0.97 } as const;
 

@@ -190,6 +190,12 @@ export interface ChartOptions {
    */
   alarm?: boolean;
   /**
+   * Pie/donut/polar-pie: a soft streak of light keeps running around the halo ring outside the chart after the entrance;
+   * radar: it wanders over the spider web
+   * (flat 2D pies; needs motion and the glow effect). Default on; `false` turns it off.
+   */
+  borderFlow?: boolean;
+  /**
    * Horizontal bar (one series): Top-N ranking. Bars stay sorted by value and swap places with
    * an animation when the order changes (bar race); `top` rows are shown (default 10).
    */

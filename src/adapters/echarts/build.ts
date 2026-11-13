@@ -11,7 +11,7 @@ import { escapeHtml, fieldLabel, formatAxisValue, formatTime, formatValue } from
 import { deepMerge, isPlainObject } from '../../core/sanitize';
 import { ALL_PAIRS_SAFE_SLOTS, STATUS_META, statusForValue, type ResolvedTheme } from '../../core/theme';
 import type { ChartDefinition, FieldDef, Row, StatusLevel } from '../../core/types';
-import { alpha, DEPTH_PX, deltaText, depthShadow, discSheen, fillGradient, glow, holo, hoverSpring, hudRings, landingFlash, pieSlice, sweepEdge, wallPolygons, isEffectSeries, neonCore, pulseSeries, shade, SERIES_STAGGER_MS, sphere, stagger, swell, type PulsePoint } from './effects';
+import { alpha, borderFlow, webFlow, DEPTH_PX, deltaText, depthShadow, discSheen, fillGradient, glow, holo, hoverSpring, hudRings, landingFlash, pieSlice, sweepEdge, wallPolygons, isEffectSeries, neonCore, pulseSeries, shade, SERIES_STAGGER_MS, sphere, stagger, swell, type PulsePoint } from './effects';
 import { layoutWords } from './word-layout';
 import { packCircles } from './pack-layout';
 
@@ -1135,7 +1135,8 @@ function buildPie(ctx: Ctx): BuildResult {
   }
   // HUD halo + tick ring (decoration only; appended last so data series indices are unchanged).
   const outerPct = donut ? 74 : labelsMode === false ? 72 : 66;
-  series.push(...hudRings(t, ctx.motion, center, outerPct + 3));
+  const hudOuter = outerPct + 3;
+  series.push(...hudRings(t, ctx.motion, center, hudOuter));
   if (!t.effects.depth) {
     const pctOfFlat = (v: string, size: number) => (parseFloat(v) / 100) * size;
     series.push(...discSheen(t, (w, h) => {
@@ -1145,6 +1146,11 @@ function buildPie(ctx: Ctx): BuildResult {
   }
   // F — glowing leading edge on the entrance sweep.
   if (ctx.entrance && !t.effects.depth) series.push(...sweepEdge(t, ctx.motion, center, outerPct, Math.round(ctx.motion.entranceMs * 1.5)));
+  // Border flow: one glowing comet keeps running around the HUD halo ring (hudRings draws it
+  // at outer + 4) once the sweep has finished.
+  if (!t.effects.depth && def.options?.borderFlow !== false) {
+    series.push(...borderFlow(t, ctx.motion, center, hudOuter + 4, ctx.entrance ? Math.round(ctx.motion.entranceMs * 1.5) : 0));
+  }
   if (t.effects.depth) {
     // 3D style: a tilted thick disk seen from ~35° above (like Highcharts' 3D pie).
     // A custom series draws each slice's top face squashed to an ellipse plus a layered side
@@ -1542,6 +1548,13 @@ function buildTreemap(ctx: Ctx): BuildResult {
   return { option, warnings, nodeRows, lookup: () => undefined };
 }
 
+/** Stable 32-bit seed from a string (FNV-1a). */
+function hashSeed(text: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+  return h >>> 0;
+}
+
 function buildRadar(ctx: Ctx): BuildResult {
   const { definition: def, rows, theme: t } = ctx;
   const e = def.encoding ?? {};
@@ -1559,6 +1572,8 @@ function buildRadar(ctx: Ctx): BuildResult {
   const max = def.options?.max ?? Math.max(100, ...rows.map(r => typeof r[e.value!] === 'number' ? r[e.value!] as number : 0));
   const legendAt = legendPosition(def, groups.length);
   const web = t.mode === 'light' ? t.tokens.axisLine : t.tokens.accentCyan;
+  const radarRadius = legendAt === 'right' ? 72 : 68;
+  const radarCenter: [string, string] = legendAt === 'right' ? ['42%', '52%'] : ['50%', legendAt === 'bottom' ? '46%' : '56%'];
   // Spider web (Highcharts "polar-spider" form): polygon grid lines only, series drawn as
   // lines with small points. The enclosed area appears only on hover so overlapping
   // series stay legible over translucent dashboard panels.
@@ -1566,8 +1581,8 @@ function buildRadar(ctx: Ctx): BuildResult {
     ...baseOption(ctx),
     radar: {
       shape: 'polygon',
-      radius: legendAt === 'right' ? '72%' : '68%',
-      center: legendAt === 'right' ? ['42%', '52%'] : ['50%', legendAt === 'bottom' ? '46%' : '56%'],
+      radius: `${radarRadius}%`,
+      center: radarCenter,
       axisName: { color: t.tokens.textSecondary, fontSize: 12 },
       indicator: categories.map(name => ({ name, max, ...(def.options?.min !== undefined ? { min: def.options.min } : {}) })),
       // HUD web: spokes and rings in a faint accent, the outer ring brightest.
@@ -1588,7 +1603,11 @@ function buildRadar(ctx: Ctx): BuildResult {
       areaStyle: { opacity: 0 },
       emphasis: { focus: 'self' },
       animationDelay: stagger(ctx.motion, data.length),
-    }],
+    },
+    // Web flow: a soft light wanders over the web's rings and spokes (ECharts' default 5 rings).
+    ...(def.options?.borderFlow !== false
+      ? webFlow(t, ctx.motion, radarCenter, radarRadius, categories.length, 5, hashSeed(def.id), ctx.entrance ? ctx.motion.entranceMs : 0)
+      : [])],
     tooltip: {
       ...tooltipBase(t, 'item'),
       show: def.interactions?.includes('tooltip') !== false,
@@ -2025,7 +2044,9 @@ function buildPolarPie(ctx: Ctx): BuildResult {
       label: { color: t.tokens.textPrimary, rotate: 'radial', fontSize: 11, minAngle: 10 },
       emphasis: { focus: 'ancestor', itemStyle: { shadowBlur: 18 } },
       animationType: 'expansion', animationDuration: ctx.motion.entranceMs,
-    }, ...hudRings(t, ctx.motion, ['50%', '50%'], 86)], tooltip: {
+    }, ...hudRings(t, ctx.motion, ['50%', '50%'], 86),
+    // Border flow on the halo ring (hudRings draws it at outer + 4), after the expansion.
+    ...(def.options?.borderFlow !== false ? borderFlow(t, ctx.motion, ['50%', '50%'], 86 + 4, ctx.entrance ? ctx.motion.entranceMs : 0) : [])], tooltip: {
       ...tooltipBase(t, 'item'), show: def.interactions?.includes('tooltip') !== false,
       formatter: (p: Opt) => tooltipHeader(String(p.name)) + tooltipRow(p.color, fieldLabel(fieldMap(def.data.fields).get(e.value!), e.value!), formatValue(p.value, fieldMap(def.data.fields).get(e.value!), { locale })),
     } },

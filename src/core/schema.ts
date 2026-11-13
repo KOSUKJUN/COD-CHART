@@ -326,6 +326,7 @@ export function validateChartDefinition(input: unknown): ValidationResult {
       err('options.staleAfterMs', 'range', 'staleAfterMs는 1,000–86,400,000 사이의 숫자 또는 false 이어야 합니다.');
     }
     if (o.alarm !== undefined && typeof o.alarm !== 'boolean') err('options.alarm', 'type', 'alarm은 불리언이어야 합니다.');
+    if (o.borderFlow !== undefined && typeof o.borderFlow !== 'boolean') err('options.borderFlow', 'type', 'borderFlow는 불리언이어야 합니다.');
     if (o.pattern !== undefined && o.pattern !== 'week-hour') err('options.pattern', 'enum', "pattern은 'week-hour' 이어야 합니다.");
     if (o.ranking !== undefined && typeof o.ranking !== 'boolean') {
       const top = isPlainObject(o.ranking) ? (o.ranking as Record<string, unknown>).top : null;

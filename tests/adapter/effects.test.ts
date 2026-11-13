@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildOption, type Opt } from '../../src/adapters/echarts/build';
-import { deltaText, fillGradient, glow, stagger, STAGGER_WINDOW_MS } from '../../src/adapters/echarts/effects';
+import { BORDER_FLOW_PERIOD_MS, deltaText, fillGradient, glow, stagger, STAGGER_WINDOW_MS, webRoute } from '../../src/adapters/echarts/effects';
 import { resolveMotion, type MotionEnvironment } from '../../src/core/animation';
 import { normalizeRows } from '../../src/core/data';
 import { assertValidDefinition, validateChartDefinition } from '../../src/core/schema';
@@ -220,5 +220,92 @@ describe('3D style (theme.effects.depth)', () => {
       const style = type === 'gauge' ? s.progress.itemStyle : s.itemStyle;
       expect(style.shadowOffsetY, type).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('pie border flow', () => {
+  const pie = (extra: Opt = {}) => ({ ...definitions.donut!, type: 'pie', ...extra });
+  const border = (o: Opt) => series(o).find((s) => s.id === 'fx:border');
+
+  it('pie and donut get one soft streak (no head dot) running around the halo ring, forever', () => {
+    for (const def of [pie(), definitions.donut!]) {
+      const s = border(build(def));
+      expect(s).toBeDefined();
+      const el = s!.renderItem({}, { getWidth: () => 400, getHeight: () => 300 });
+      expect(el.keyframeAnimation).toMatchObject({ loop: true });
+      const [k0, k1] = el.keyframeAnimation.keyframes;
+      expect(k0.rotation - k1.rotation).toBeCloseTo(Math.PI * 2); // one clockwise lap per period
+      expect(el.children.every((c: Opt) => c.type === 'arc')).toBe(true); // a streak only, no head dot
+      expect(Math.max(...el.children.map((c: Opt) => c.style.opacity))).toBeLessThanOrEqual(0.6); // soft
+      const ring = series(build(def)).find((x) => x.id === 'fx:hud')!.renderItem({}, { getWidth: () => 400, getHeight: () => 300 }).children[0].shape.r;
+      expect(el.children[0].shape.r).toBeCloseTo(ring); // rides the halo ring outside the pie
+    }
+  });
+
+  it('continues from the current lap position on redraw instead of restarting at 12 o\'clock', () => {
+    const s = border(build(pie()))!;
+    const api = { getWidth: () => 400, getHeight: () => 300 };
+    const phase = s.renderItem({}, api).keyframeAnimation.keyframes[0].rotation;
+    const expected = -((Date.now() % BORDER_FLOW_PERIOD_MS) / BORDER_FLOW_PERIOD_MS) * Math.PI * 2;
+    expect(Math.abs(phase - expected)).toBeLessThan(0.1);
+  });
+
+  it('is off with borderFlow: false, without motion, without glow, and on the 3D disc', () => {
+    expect(border(build(pie({ options: { borderFlow: false } })))).toBeUndefined();
+    expect(border(build(pie(), { reducedMotion: true }))).toBeUndefined();
+    expect(border(build(pie({ theme: { effects: { glow: false } } })))).toBeUndefined();
+    expect(border(build(pie({ theme: { effects: { depth: true } } })))).toBeUndefined();
+  });
+
+  it('polar pie gets the same comet on its halo ring', () => {
+    const polar = (extra: Opt = {}) => ({
+      schemaVersion: v, id: 'fx-polar', type: 'polar-pie',
+      data: {
+        fields: [{ name: 'id', type: 'string' }, { name: 'parent', type: 'string' }, { name: 'name', type: 'string' }, { name: 'value', type: 'number' }],
+        rows: [{ id: '0', parent: '', name: 'World', value: 3 }, { id: '1', parent: '0', name: 'Asia', value: 2 }, { id: '2', parent: '0', name: 'Europe', value: 1 }],
+      },
+      encoding: { label: 'id', category: 'name', path: ['parent'], value: 'value' },
+      ...extra,
+    });
+    const api = { getWidth: () => 400, getHeight: () => 300 };
+    const s = border(build(polar()))!;
+    expect(s).toBeDefined();
+    const ring = series(build(polar())).find((x) => x.id === 'fx:hud')!.renderItem({}, api).children[0].shape.r;
+    expect(s.renderItem({}, api).children[0].shape.r).toBeCloseTo(ring);
+    expect(border(build(polar({ options: { borderFlow: false } })))).toBeUndefined();
+  });
+
+  it('spider: a soft streak wanders over the web on a closed route along rings and spokes', () => {
+    const radar = (extra: Opt = {}) => ({ ...definitions.radar!, ...extra });
+    const web = (o: Opt) => series(o).find((x) => x.id === 'fx:web');
+    const s = web(build(radar()));
+    expect(s).toBeDefined();
+    const el = s!.renderItem({}, { getWidth: () => 400, getHeight: () => 300 });
+    expect(el.children.length).toBeGreaterThan(3);
+    expect(el.children.every((c: Opt) => c.style.opacity <= 0.6)).toBe(true); // soft, no bright head
+    const kf = el.children.at(-1).keyframeAnimation;
+    expect(kf.loop).toBe(true);
+    const first = kf.keyframes[0], last = kf.keyframes.at(-1);
+    expect(last.x).toBeCloseTo(first.x); // closed loop: no jump when it repeats
+    expect(last.y).toBeCloseTo(first.y);
+    expect(web(build(radar({ options: { borderFlow: false } })))).toBeUndefined();
+    expect(web(build(radar(), { reducedMotion: true }))).toBeUndefined();
+  });
+
+  it('web route only steps between neighbouring web points and returns home', () => {
+    const spokes = 6, rings = 5;
+    const route = webRoute(spokes, rings, 42);
+    expect(route[0]).toEqual(route.at(-1)!.map((v) => expect.closeTo(v, 9)));
+    for (let n = 1; n < route.length; n++) {
+      const [x0, y0] = route[n - 1]!, [x1, y1] = route[n]!;
+      const r0 = Math.hypot(x0, y0), r1 = Math.hypot(x1, y1);
+      const sameSpoke = Math.abs(Math.atan2(y0, x0) - Math.atan2(y1, x1)) < 1e-9;
+      // Either one ring in/out along a spoke, or one edge along a ring.
+      expect(sameSpoke ? Math.abs(r1 - r0) - 1 / rings : Math.abs(r1 - r0)).toBeCloseTo(0, 9);
+    }
+  });
+
+  it('borderFlow must be a boolean', () => {
+    expect(validateChartDefinition(pie({ options: { borderFlow: 'yes' } })).valid).toBe(false);
   });
 });
