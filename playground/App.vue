@@ -8,7 +8,7 @@ import MainScreen from './views/MainScreen.vue';
 import './views/scene.css';
 
 // `?theme=white` opens the preview in the COD-M white theme.
-const controls = reactive({ motion: true, patterns: false, svg: false, live: true, oneByOne: false, tour: false, depth: new URLSearchParams(location.search).get('depth') === '1', zoom: false, light: new URLSearchParams(location.search).get('theme') === 'white' });
+const controls = reactive({ motion: true, patterns: false, svg: false, live: false, oneByOne: false, tour: false, depth: new URLSearchParams(location.search).get('depth') === '1', zoom: false, light: new URLSearchParams(location.search).get('theme') === 'white' });
 
 /** Which page to show: the component catalogue, or the same COD-M contents on the 상황판 / 메인화면. */
 type View = 'components' | 'board' | 'main';
